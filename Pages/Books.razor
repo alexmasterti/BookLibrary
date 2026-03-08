@@ -1,0 +1,234 @@
+@page "/books"
+@inject BookLibrary.Interfaces.IBookService BookService
+@inject IEnumerable<BookLibrary.Interfaces.ISortStrategy<BookLibrary.Models.Book>> SortStrategies
+@inject NavigationManager Nav
+
+<PageTitle>My Books — BookShelf</PageTitle>
+
+<div class="page-header">
+    <div>
+        <h1 class="page-title gradient-text">My Library</h1>
+        <p style="color:var(--text-muted);font-size:13px;margin:0">
+            @(books?.Count.ToString() ?? "—") books total
+        </p>
+    </div>
+    <button class="btn btn-primary" @onclick='() => Nav.NavigateTo("/books/new")'>
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+        </svg>
+        Add Book
+    </button>
+</div>
+
+<div class="filter-bar">
+    <input class="form-control" style="flex:1;min-width:180px"
+           placeholder="Search title or author..."
+           value="@searchQuery" @oninput="OnSearchInput" />
+
+    <select class="form-select" style="width:170px" value="@selectedStatus" @onchange="OnStatusChange">
+        <option value="">All statuses</option>
+        @foreach (var status in Enum.GetValues<BookLibrary.Models.ReadingStatus>())
+        {
+            <option value="@status">@StatusLabel(status)</option>
+        }
+    </select>
+
+    <select class="form-select" style="width:150px" value="@selectedSort" @onchange="OnSortChange">
+        @foreach (var s in SortStrategies)
+        {
+            <option value="@s.Name">Sort: @s.Name</option>
+        }
+    </select>
+
+    <button class="btn btn-secondary" @onclick="ClearFilters">Clear</button>
+</div>
+
+@if (books is null)
+{
+    <div class="empty-state">
+        <div class="empty-icon">⏳</div>
+        <p>Loading your library...</p>
+    </div>
+}
+else if (!books.Any())
+{
+    <div class="empty-state">
+        <div class="empty-icon">📭</div>
+        <p style="font-weight:600;font-size:16px;color:var(--text)">No books found</p>
+        <p>@(string.IsNullOrEmpty(searchQuery) && string.IsNullOrEmpty(selectedStatus)
+            ? "Your library is empty. Add your first book!"
+            : "No books match your current filters.")</p>
+        @if (!string.IsNullOrEmpty(searchQuery) || !string.IsNullOrEmpty(selectedStatus))
+        {
+            <button class="btn btn-secondary" @onclick="ClearFilters">Clear filters</button>
+        }
+        else
+        {
+            <button class="btn btn-primary" @onclick='() => Nav.NavigateTo("/books/new")'>Add your first book</button>
+        }
+    </div>
+}
+else
+{
+    <div class="books-grid">
+        @foreach (var book in books)
+        {
+            <div class="book-card">
+                <div class="book-card-top">
+                    <span class="book-icon">@BookEmoji(book.Status)</span>
+                    <span class="badge @StatusBadgeClass(book.Status)">@StatusLabel(book.Status)</span>
+                </div>
+
+                <h3 class="book-title">@book.Title</h3>
+                <p class="book-author">by @book.Author</p>
+
+                <div class="book-meta">
+                    @if (!string.IsNullOrEmpty(book.Genre))
+                    {
+                        <span class="book-genre-tag">@book.Genre</span>
+                    }
+                    @if (book.Year.HasValue)
+                    {
+                        <span class="book-year-tag">@book.Year</span>
+                    }
+                </div>
+
+                <div class="book-card-footer">
+                    <span style="font-size:11px;color:var(--text-dim)">
+                        @book.CreatedAt.ToString("MMM yyyy")
+                    </span>
+                    <div class="book-card-actions">
+                        <button class="btn btn-sm btn-outline-primary"
+                                @onclick='() => Nav.NavigateTo($"/books/edit/{book.Id}")'>Edit</button>
+                        <button class="btn btn-sm btn-outline-danger"
+                                @onclick="() => AskDeleteConfirm(book.Id, book.Title)">Delete</button>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+<ConfirmDialog IsVisible="showConfirm"
+               Title="Delete book?"
+               Message="@($"\"{pendingDeleteTitle}\" will be permanently removed from your library.")"
+               OnConfirm="ConfirmDelete"
+               OnCancel="CancelDelete" />
+
+<Toast IsVisible="showToast" Message="@toastMessage" Type="@toastType" />
+
+@code {
+    private List<BookLibrary.Models.Book>? books;
+    private string searchQuery = string.Empty;
+    private string selectedStatus = string.Empty;
+    private string selectedSort = "Title";
+
+    private bool showConfirm = false;
+    private int pendingDeleteId;
+    private string pendingDeleteTitle = string.Empty;
+
+    private bool showToast = false;
+    private string toastMessage = string.Empty;
+    private string toastType = "success";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var uri = new Uri(Nav.Uri);
+        var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+        if (query["status"] is string s) selectedStatus = s;
+
+        // Show success toast if redirected back from BookForm
+        if (query["toast"] is string t)
+        {
+            toastMessage = t;
+            toastType = "success";
+            _ = ShowToastThenHide();
+        }
+
+        await LoadBooks();
+    }
+
+    private async Task LoadBooks()
+    {
+        BookLibrary.Models.ReadingStatus? status = null;
+        if (Enum.TryParse<BookLibrary.Models.ReadingStatus>(selectedStatus, out var parsed))
+            status = parsed;
+
+        books = await BookService.SearchAsync(searchQuery, status, selectedSort);
+    }
+
+    private async Task OnSearchInput(ChangeEventArgs e)
+    {
+        searchQuery = e.Value?.ToString() ?? string.Empty;
+        await LoadBooks();
+    }
+
+    private async Task OnStatusChange(ChangeEventArgs e)
+    {
+        selectedStatus = e.Value?.ToString() ?? string.Empty;
+        await LoadBooks();
+    }
+
+    private async Task OnSortChange(ChangeEventArgs e)
+    {
+        selectedSort = e.Value?.ToString() ?? "Title";
+        await LoadBooks();
+    }
+
+    private void AskDeleteConfirm(int id, string title)
+    {
+        pendingDeleteId = id;
+        pendingDeleteTitle = title;
+        showConfirm = true;
+    }
+
+    private async Task ConfirmDelete()
+    {
+        showConfirm = false;
+        await BookService.DeleteBookAsync(pendingDeleteId);
+        await LoadBooks();
+        toastMessage = $"\"{pendingDeleteTitle}\" deleted successfully";
+        toastType = "success";
+        _ = ShowToastThenHide();
+    }
+
+    private void CancelDelete() => showConfirm = false;
+
+    private async Task ClearFilters()
+    {
+        searchQuery = string.Empty;
+        selectedStatus = string.Empty;
+        selectedSort = "Title";
+        await LoadBooks();
+    }
+
+    private async Task ShowToastThenHide()
+    {
+        showToast = true;
+        StateHasChanged();
+        await Task.Delay(2800);
+        showToast = false;
+        StateHasChanged();
+    }
+
+    private string StatusBadgeClass(BookLibrary.Models.ReadingStatus status) => status switch
+    {
+        BookLibrary.Models.ReadingStatus.Read             => "badge badge-read",
+        BookLibrary.Models.ReadingStatus.CurrentlyReading => "badge badge-reading",
+        _                                                  => "badge badge-want"
+    };
+
+    private string StatusLabel(BookLibrary.Models.ReadingStatus status) => status switch
+    {
+        BookLibrary.Models.ReadingStatus.Read             => "Read",
+        BookLibrary.Models.ReadingStatus.CurrentlyReading => "Reading",
+        _                                                  => "Want to Read"
+    };
+
+    private string BookEmoji(BookLibrary.Models.ReadingStatus status) => status switch
+    {
+        BookLibrary.Models.ReadingStatus.Read             => "✅",
+        BookLibrary.Models.ReadingStatus.CurrentlyReading => "📖",
+        _                                                  => "📚"
+    };
+}

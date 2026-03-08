@@ -1,0 +1,158 @@
+@page "/"
+@inject BookLibrary.Interfaces.IBookService BookService
+@inject NavigationManager Nav
+
+<PageTitle>Dashboard — BookShelf</PageTitle>
+
+<div class="page-header">
+    <div>
+        <h1 class="page-title gradient-text">Dashboard</h1>
+        <p style="color:var(--text-muted);font-size:13px;margin:0">Welcome back to your library</p>
+    </div>
+    <button class="btn btn-primary" @onclick='() => Nav.NavigateTo("/books/new")'>
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+        </svg>
+        Add Book
+    </button>
+</div>
+
+@if (books is not null)
+{
+    <div class="stats-grid">
+        <div class="stat-card accent">
+            <div class="stat-icon">📚</div>
+            <div class="stat-label">Total Books</div>
+            <div class="stat-value">@books.Count</div>
+        </div>
+        <div class="stat-card green">
+            <div class="stat-icon">✅</div>
+            <div class="stat-label">Finished</div>
+            <div class="stat-value">@books.Count(b => b.Status == BookLibrary.Models.ReadingStatus.Read)</div>
+        </div>
+        <div class="stat-card yellow">
+            <div class="stat-icon">📖</div>
+            <div class="stat-label">Reading Now</div>
+            <div class="stat-value">@books.Count(b => b.Status == BookLibrary.Models.ReadingStatus.CurrentlyReading)</div>
+        </div>
+        <div class="stat-card blue">
+            <div class="stat-icon">🔖</div>
+            <div class="stat-label">Want to Read</div>
+            <div class="stat-value">@books.Count(b => b.Status == BookLibrary.Models.ReadingStatus.WantToRead)</div>
+        </div>
+    </div>
+
+    @if (currentlyReading.Any())
+    {
+        <div style="margin-bottom:2rem">
+            <h2 style="font-size:1rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:1rem">
+                Currently Reading
+            </h2>
+            <div class="books-grid">
+                @foreach (var book in currentlyReading)
+                {
+                    <div class="book-card" @onclick='() => Nav.NavigateTo($"/books/edit/{book.Id}")' style="cursor:pointer">
+                        <div class="book-card-top">
+                            <span class="book-icon">📖</span>
+                            <span class="badge badge-reading">Reading</span>
+                        </div>
+                        <h3 class="book-title">@book.Title</h3>
+                        <p class="book-author">by @book.Author</p>
+                        @if (book.Genre != null)
+                        {
+                            <div class="book-meta"><span class="book-genre-tag">@book.Genre</span></div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    }
+
+    @if (recentlyAdded.Any())
+    {
+        <div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
+                <h2 style="font-size:1rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin:0">
+                    Recently Added
+                </h2>
+                <button class="btn btn-secondary btn-sm" @onclick='() => Nav.NavigateTo("/books")'>
+                    View all
+                </button>
+            </div>
+            <div class="books-grid">
+                @foreach (var book in recentlyAdded)
+                {
+                    <div class="book-card" @onclick='() => Nav.NavigateTo($"/books/edit/{book.Id}")' style="cursor:pointer">
+                        <div class="book-card-top">
+                            <span class="book-icon">@BookEmoji(book.Status)</span>
+                            <span class="badge @BadgeClass(book.Status)">@StatusLabel(book.Status)</span>
+                        </div>
+                        <h3 class="book-title">@book.Title</h3>
+                        <p class="book-author">by @book.Author</p>
+                        <div class="book-meta">
+                            @if (book.Genre != null) { <span class="book-genre-tag">@book.Genre</span> }
+                            @if (book.Year != null) { <span class="book-year-tag">@book.Year</span> }
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+
+    @if (!books.Any())
+    {
+        <div class="empty-state">
+            <div class="empty-icon">📭</div>
+            <p style="font-weight:600;font-size:16px;color:var(--text)">Your library is empty</p>
+            <p>Start tracking your reading journey by adding your first book.</p>
+            <button class="btn btn-primary" @onclick='() => Nav.NavigateTo("/books/new")'>Add your first book</button>
+        </div>
+    }
+}
+else
+{
+    <div class="empty-state">
+        <div class="empty-icon">⏳</div>
+        <p>Loading...</p>
+    </div>
+}
+
+@code {
+    private List<BookLibrary.Models.Book>? books;
+    private List<BookLibrary.Models.Book> currentlyReading = new();
+    private List<BookLibrary.Models.Book> recentlyAdded = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        books = await BookService.GetAllBooksAsync();
+        currentlyReading = books
+            .Where(b => b.Status == BookLibrary.Models.ReadingStatus.CurrentlyReading)
+            .Take(4)
+            .ToList();
+        recentlyAdded = books
+            .OrderByDescending(b => b.CreatedAt)
+            .Take(8)
+            .ToList();
+    }
+
+    private string BadgeClass(BookLibrary.Models.ReadingStatus s) => s switch
+    {
+        BookLibrary.Models.ReadingStatus.Read             => "badge badge-read",
+        BookLibrary.Models.ReadingStatus.CurrentlyReading => "badge badge-reading",
+        _                                                  => "badge badge-want"
+    };
+
+    private string StatusLabel(BookLibrary.Models.ReadingStatus s) => s switch
+    {
+        BookLibrary.Models.ReadingStatus.Read             => "Read",
+        BookLibrary.Models.ReadingStatus.CurrentlyReading => "Reading",
+        _                                                  => "Want to Read"
+    };
+
+    private string BookEmoji(BookLibrary.Models.ReadingStatus s) => s switch
+    {
+        BookLibrary.Models.ReadingStatus.Read             => "✅",
+        BookLibrary.Models.ReadingStatus.CurrentlyReading => "📖",
+        _                                                  => "📚"
+    };
+}

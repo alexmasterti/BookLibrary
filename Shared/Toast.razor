@@ -1,0 +1,17 @@
+@if (IsVisible)
+{
+    <div class="toast-wrapper toast-@Type toast-in">
+        <span class="toast-icon">
+            @if (Type == "success") { <text>✓</text> }
+            else if (Type == "error") { <text>✕</text> }
+            else { <text>ℹ</text> }
+        </span>
+        <span class="toast-message">@Message</span>
+    </div>
+}
+
+@code {
+    [Parameter] public bool IsVisible { get; set; }
+    [Parameter] public string Message { get; set; } = string.Empty;
+    [Parameter] public string Type { get; set; } = "success"; // success | error | info
+}

@@ -1,0 +1,25 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+## SQLite database (local data, not committed)
+*.db
+*.db-shm
+*.db-wal
+
+## Secrets
+appsettings.Production.json
+*.pfx
+
+## OS
+.DS_Store
+Thumbs.db
+
+## Rider / JetBrains
+.idea/
+
+## VS Code
+.vscode/

@@ -1,0 +1,24 @@
+@if (IsVisible)
+{
+    <div class="dialog-overlay" @onclick="HandleOverlayClick">
+        <div class="dialog-card" @onclick:stopPropagation>
+            <div class="dialog-icon">🗑️</div>
+            <h4 class="dialog-title">@Title</h4>
+            <p class="dialog-message">@Message</p>
+            <div class="dialog-actions">
+                <button class="btn btn-secondary" @onclick="OnCancel">Cancel</button>
+                <button class="btn btn-danger" @onclick="OnConfirm">Delete</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public bool IsVisible { get; set; }
+    [Parameter] public string Title { get; set; } = "Are you sure?";
+    [Parameter] public string Message { get; set; } = "This action cannot be undone.";
+    [Parameter] public EventCallback OnConfirm { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+
+    private async Task HandleOverlayClick() => await OnCancel.InvokeAsync();
+}
