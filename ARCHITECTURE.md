@@ -49,6 +49,29 @@ BookLibrary/
 ├── Data/
 │   └── AppDbContext.cs        ← EF Core context
 │
+├── Controllers/
+│   ├── BooksController.cs     ← REST API CRUD, JWT-protected
+│   └── AuthController.cs      ← POST /api/auth/login → JWT token
+│
+├── DTOs/
+│   ├── BookDto.cs             ← API response shape
+│   ├── CreateBookRequest.cs   ← POST body
+│   ├── UpdateBookRequest.cs   ← PUT body
+│   ├── LoginRequest.cs        ← Auth input
+│   └── LoginResponse.cs       ← Auth output (token + expiry)
+│
+├── Options/
+│   ├── JwtOptions.cs          ← JWT config (key, issuer, expiry)
+│   ├── CacheOptions.cs        ← Cache duration config
+│   └── LibraryStatsOptions.cs ← Background job interval config
+│
+├── Middleware/
+│   ├── RequestTimingMiddleware.cs           ← Logs elapsed ms per request
+│   └── RequestTimingMiddlewareExtensions.cs ← app.UseRequestTiming() extension
+│
+├── BackgroundServices/
+│   └── LibraryStatsBackgroundService.cs ← Periodic stats logger (IHostedService)
+│
 ├── Pages/
 │   ├── Index.razor            ← Dashboard (stats, currently reading, recently added)
 │   ├── Books.razor            ← Injects IBookService + IEnumerable<ISortStrategy>
@@ -424,6 +447,229 @@ This pattern keeps `Toast.razor` reusable — it works identically on any page.
 
 ---
 
+## REST API Layer
+
+### Controllers
+
+The project exposes a full REST API alongside the Blazor UI. Both share the
+same `IBookService` — zero duplication of business logic.
+
+| Controller | Route | Description |
+|---|---|---|
+| `AuthController` | `POST /api/auth/login` | Returns a JWT token |
+| `BooksController` | `GET/POST/PUT/DELETE /api/books` | Full CRUD, JWT-protected |
+
+### DTOs (Data Transfer Objects)
+
+Domain models (`Book`) are never returned directly from the API. They are
+mapped to DTOs which form a stable, independent API contract.
+
+```
+Book (domain) → BookDto (API response)
+CreateBookRequest (API input) → Book (via IBookFactory)
+```
+
+**Files:** `DTOs/BookDto.cs`, `CreateBookRequest.cs`, `UpdateBookRequest.cs`,
+`LoginRequest.cs`, `LoginResponse.cs`
+
+### JWT Authentication
+
+The API layer uses stateless JWT Bearer authentication. The Blazor UI is
+unaffected — it uses its own session model.
+
+**Flow:**
+```
+1. POST /api/auth/login  { username, password }
+2. Server validates → TokenService generates signed JWT
+3. Client sends: Authorization: Bearer <token>
+4. JWT middleware validates signature → populates HttpContext.User
+5. [Authorize] on BooksController allows/denies access
+```
+
+**Files:** `Options/JwtOptions.cs`, `Services/TokenService.cs`,
+`Controllers/AuthController.cs`
+
+**DI registration in Program.cs:**
+```csharp
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options => { /* TokenValidationParameters */ });
+builder.Services.AddSingleton<ITokenService, TokenService>();
+```
+
+**Pipeline order (critical):**
+```csharp
+app.UseAuthentication();   // establishes identity from JWT
+app.UseAuthorization();    // evaluates [Authorize] using that identity
+app.MapControllers();      // BEFORE MapFallbackToPage — fallback catches everything
+```
+
+---
+
+## Options Pattern
+
+Configuration is never read as raw strings. Each feature has a strongly-typed
+options class bound from `appsettings.json`.
+
+| Class | Section | Used by |
+|---|---|---|
+| `JwtOptions` | `"Jwt"` | `TokenService`, JWT middleware |
+| `CacheOptions` | `"Cache"` | `CachingBookRepository` |
+| `LibraryStatsOptions` | `"LibraryStats"` | `LibraryStatsBackgroundService` |
+
+**Registration:**
+```csharp
+builder.Services.Configure<CacheOptions>(
+    builder.Configuration.GetSection(CacheOptions.SectionName));
+```
+
+**Consumption:**
+```csharp
+public CachingBookRepository(IOptions<CacheOptions> options, ...)
+    => _options = options.Value;
+```
+
+This pattern makes configuration testable (pass `Options.Create(new CacheOptions {...})`)
+and refactor-friendly (rename the property, not the string).
+
+---
+
+## Caching (Extended Decorator Chain)
+
+`CachingBookRepository` is a third Decorator that wraps `LoggingBookRepository`.
+The full chain at runtime:
+
+```
+BookService
+  → CachingBookRepository   (cache-aside: serve from cache or fetch+store)
+    → LoggingBookRepository (logs every call)
+      → BookRepository      (SQLite via EF Core)
+```
+
+**Strategy: Cache-aside / Write-invalidate**
+- Reads: serve from `IMemoryCache` if present; otherwise fetch and cache.
+- Writes: always delegate to inner repo, then remove stale cache entries.
+
+**DI wiring (three-step concrete registration):**
+```csharp
+builder.Services.AddScoped<BookRepository>();           // step 1 — innermost
+builder.Services.AddScoped<LoggingBookRepository>(...); // step 2 — middle
+builder.Services.AddScoped<IBookRepository>(...         // step 3 — outermost
+    new CachingBookRepository(
+        sp.GetRequiredService<LoggingBookRepository>(), ...));
+```
+
+Each decorator is registered as its **concrete type** so the next layer can
+resolve it. Only the outermost is registered as `IBookRepository`.
+
+---
+
+## Middleware
+
+**File:** `Middleware/RequestTimingMiddleware.cs`
+
+Custom middleware that measures and logs elapsed time for every HTTP request.
+
+```
+Request  → [RequestTimingMiddleware] → [Auth] → [Controller/Blazor]
+Response ← [RequestTimingMiddleware] ← logs elapsed + status code
+```
+
+**Middleware pipeline concepts:**
+- `try/finally` ensures timing is always logged, even on exceptions.
+- `ILogger<T>` injected via **constructor** (singleton-safe).
+- Scoped services go in `InvokeAsync` parameters (per-request).
+- Blazor SignalR connections (`/_blazor`) are skipped — they are long-lived
+  websockets and their elapsed time would be meaningless.
+
+**Registration via extension method (conventional pattern):**
+```csharp
+// Middleware/RequestTimingMiddlewareExtensions.cs
+public static IApplicationBuilder UseRequestTiming(this IApplicationBuilder app)
+    => app.UseMiddleware<RequestTimingMiddleware>();
+
+// Program.cs
+app.UseRequestTiming();
+```
+
+---
+
+## Background Service
+
+**File:** `BackgroundServices/LibraryStatsBackgroundService.cs`
+
+A hosted background task that logs library statistics on a configurable interval.
+
+```csharp
+public class LibraryStatsBackgroundService : BackgroundService
+{
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(_options.IntervalSeconds), stoppingToken);
+            await LogStatsAsync(stoppingToken);
+        }
+    }
+}
+```
+
+**Critical: Scoped service in a Singleton**
+
+`AddHostedService<T>` registers the service as a **Singleton**. `IBookService`
+is registered as **Scoped**. You cannot inject a Scoped service into a Singleton
+constructor — it would capture a stale scope forever, leaking `DbContext`.
+
+**Solution: `IServiceScopeFactory`**
+```csharp
+// Inject the factory (Singleton-safe), not the service (Scoped)
+public LibraryStatsBackgroundService(IServiceScopeFactory scopeFactory, ...)
+
+// Create a fresh scope per tick — disposes cleanly after use
+await using var scope = _scopeFactory.CreateAsyncScope();
+var bookService = scope.ServiceProvider.GetRequiredService<IBookService>();
+```
+
+This is a fundamental pattern for any background work that needs database access.
+
+---
+
+## Unit Testing
+
+**Project:** `BookLibrary.Tests/` — xUnit + Moq
+
+**42 tests covering:**
+
+| Test file | What is tested |
+|---|---|
+| `BookBuilderTests.cs` | Fluent builder, validation, all status values |
+| `BookServiceTests.cs` | Search filtering, strategy selection, CRUD delegation |
+| `TitleOrAuthorContainsSpecificationTests.cs` | Case-insensitive text matching |
+| `StatusSpecificationTests.cs` | Status filter matching |
+| `AndSpecificationTests.cs` | Composition, nesting (Composite pattern) |
+| `SortStrategyTests.cs` | All three strategies + null Year handling |
+| `CachingBookRepositoryTests.cs` | Cache HIT, MISS, write invalidation |
+
+**Mocking with Moq:**
+```csharp
+// Arrange — replace IBookRepository with a fake
+var repoMock = new Mock<IBookRepository>();
+repoMock.Setup(r => r.GetAllAsync()).ReturnsAsync(books);
+
+// Assert — verify the method was called exactly once
+repoMock.Verify(r => r.GetAllAsync(), Times.Once);
+```
+
+**Testing the Caching Decorator:**
+`IMemoryCache` is complex to mock — a real `MemoryCache` is used instead.
+`NullLogger<T>.Instance` provides a no-op logger with zero configuration.
+
+**Run tests:**
+```bash
+dotnet test
+```
+
+---
+
 ## Key Takeaways
 
 - **Interfaces decouple layers.** The UI, service, and data layers only know about each other through interfaces. Any layer can be replaced without touching the others.
@@ -433,3 +679,7 @@ This pattern keeps `Toast.razor` reusable — it works identically on any page.
 - **UI components follow the same SOLID rules.** `Toast` and `ConfirmDialog` are small, single-purpose, and reusable. Parent pages own state; child components only render and raise events.
 - **CSS variables are the design system.** One set of tokens drives the entire visual appearance. Switching themes requires overriding variables in one selector — not touching any component.
 - **JS interop only after render.** Browser APIs (localStorage, DOM attributes) are only available after Blazor has hydrated. Always use `OnAfterRenderAsync` with `firstRender` guard for JS calls.
+- **Never inject Scoped into Singleton.** Background services are Singletons. Use `IServiceScopeFactory` to create a fresh scope per tick when you need `DbContext` or other scoped services.
+- **Test behaviour, not implementation.** Mock `IBookRepository` (not `BookRepository`) to test `BookService`. The test never knows about EF Core — it only sees the interface.
+- **Options Pattern over raw IConfiguration.** Bind config to strongly-typed classes so configuration is testable (`Options.Create(new JwtOptions {...})`), refactor-safe, and self-documenting.
+- **Middleware pipeline order is critical.** `UseAuthentication` must precede `UseAuthorization`. `MapControllers` must precede `MapFallbackToPage`. Getting this wrong is one of the most common ASP.NET Core mistakes.
