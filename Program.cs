@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json.Serialization;
+using Microsoft.OpenApi.Models;
 using BookLibrary.BackgroundServices;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
@@ -89,6 +90,49 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
 builder.Services.AddAuthorization();
 
+// ─── Swagger / OpenAPI ─────────────────────────────────────────────────────
+// Generates interactive API docs at /swagger in Development.
+// The "Bearer" security definition lets you paste a JWT token directly
+// in the Swagger UI and test protected endpoints without Postman.
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(c =>
+{
+    c.SwaggerDoc("v1", new OpenApiInfo
+    {
+        Title   = "BookLibrary API",
+        Version = "v1",
+        Description = "REST API for the BookLibrary application. " +
+                      "Login via POST /api/auth/login to get a JWT token, " +
+                      "then click 'Authorize' and enter: Bearer &lt;token&gt;"
+    });
+
+    // Add JWT Bearer auth support to the Swagger UI
+    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Name         = "Authorization",
+        Type         = SecuritySchemeType.Http,
+        Scheme       = "Bearer",
+        BearerFormat = "JWT",
+        In           = ParameterLocation.Header,
+        Description  = "Enter your JWT token. Example: Bearer eyJhbGci..."
+    });
+
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference
+                {
+                    Type = ReferenceType.SecurityScheme,
+                    Id   = "Bearer"
+                }
+            },
+            Array.Empty<string>()
+        }
+    });
+});
+
 // ─── PATTERN: Strategy ─────────────────────────────────────────────────────
 // All three strategies are registered for ISortStrategy<Book>.
 // DI collects them into IEnumerable<ISortStrategy<Book>> automatically.
@@ -152,7 +196,16 @@ using (var scope = app.Services.CreateScope())
     db.Database.EnsureCreated();
 }
 
-if (!app.Environment.IsDevelopment())
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI(c =>
+    {
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "BookLibrary API v1");
+        c.DocumentTitle = "BookLibrary API";
+    });
+}
+else
 {
     app.UseExceptionHandler("/Error");
     app.UseHsts();
