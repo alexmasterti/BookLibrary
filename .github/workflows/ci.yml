@@ -49,4 +49,4 @@ jobs:
         run: |
           echo "✅ All checks passed — Railway will auto-deploy this commit."
           echo "📦 Commit: ${{ github.sha }}"
-          echo "🌐 Live URL: https://booklibrary.up.railway.app"
+          echo "🌐 Live URL: https://booklibrary-alexcostasouza-64d2.up.railway.app"
