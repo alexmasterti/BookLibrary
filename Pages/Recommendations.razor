@@ -1,0 +1,136 @@
+@page "/recommendations"
+@inject IBookService BookService
+@inject IBookRecommendationService RecommendationService
+
+<PageTitle>AI Recommendations — BookShelf</PageTitle>
+
+<div class="page-header">
+    <div>
+        <h1 class="page-title">AI Recommendations</h1>
+        <p class="page-subtitle">Powered by Claude — personalised picks based on your reading history</p>
+    </div>
+</div>
+
+@if (!hasReadBooks)
+{
+    <div class="empty-state">
+        <div class="empty-icon">📚</div>
+        <h3>Nothing to go on yet</h3>
+        <p>Mark some books as <strong>Read</strong> or <strong>Currently Reading</strong> first,<br />then come back for personalised recommendations.</p>
+        <a href="/books" class="btn btn-primary">Go to My Books</a>
+    </div>
+}
+else
+{
+    <div class="rec-actions">
+        <button class="btn btn-primary btn-ai" @onclick="LoadRecommendations" disabled="@isLoading">
+            @if (isLoading)
+            {
+                <span class="spinner"></span>
+                <span>Asking Claude...</span>
+            }
+            else
+            {
+                <span>✨ Get AI Recommendations</span>
+            }
+        </button>
+        @if (result is not null)
+        {
+            <span class="rec-count">Based on @readBookCount book(s) in your history</span>
+        }
+    </div>
+
+    @if (result is not null)
+    {
+        @if (!string.IsNullOrWhiteSpace(result.Reasoning))
+        {
+            <div class="reasoning-card">
+                <span class="reasoning-label">🤖 Claude's take on your taste</span>
+                <p>@result.Reasoning</p>
+            </div>
+        }
+
+        @if (!result.Recommendations.Any())
+        {
+            <div class="empty-state">
+                <div class="empty-icon">🔑</div>
+                <h3>API Key Required</h3>
+                <p>@result.Reasoning</p>
+                <p class="help-text">Add your Anthropic API key to <code>appsettings.json</code> under <code>Anthropic:ApiKey</code></p>
+            </div>
+        }
+        else
+        {
+            <div class="rec-grid">
+                @foreach (var rec in result.Recommendations)
+                {
+                    <div class="rec-card">
+                        <div class="rec-card-header">
+                            <h3 class="rec-title">@rec.Title</h3>
+                            <span class="rec-author">by @rec.Author</span>
+                        </div>
+                        <div class="rec-meta">
+                            @if (!string.IsNullOrWhiteSpace(rec.Genre))
+                            {
+                                <span class="badge badge-genre">@rec.Genre</span>
+                            }
+                            @if (rec.Year.HasValue)
+                            {
+                                <span class="badge badge-year">@rec.Year</span>
+                            }
+                        </div>
+                        <p class="rec-reason">💡 @rec.Reason</p>
+                    </div>
+                }
+            </div>
+        }
+    }
+}
+
+@if (!string.IsNullOrWhiteSpace(errorMessage))
+{
+    <div class="alert alert-error">@errorMessage</div>
+}
+
+@code {
+    private BookRecommendationResult? result;
+    private bool isLoading     = false;
+    private bool hasReadBooks  = false;
+    private int  readBookCount = 0;
+    private string errorMessage = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var books = await BookService.GetAllBooksAsync();
+        var readBooks = books
+            .Where(b => b.Status is ReadingStatus.Read or ReadingStatus.CurrentlyReading)
+            .ToList();
+        readBookCount = readBooks.Count;
+        hasReadBooks  = readBookCount > 0;
+    }
+
+    private async Task LoadRecommendations()
+    {
+        isLoading    = true;
+        errorMessage = string.Empty;
+        result       = null;
+
+        try
+        {
+            var books = await BookService.GetAllBooksAsync();
+            var readBooks = books
+                .Where(b => b.Status is ReadingStatus.Read or ReadingStatus.CurrentlyReading)
+                .ToList();
+
+            result = await RecommendationService.GetRecommendationsAsync(readBooks);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Something went wrong: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+}

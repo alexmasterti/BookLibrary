@@ -2,6 +2,7 @@ using BookLibrary.DTOs;
 using BookLibrary.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace BookLibrary.Controllers;
 
@@ -25,6 +26,7 @@ namespace BookLibrary.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/[controller]")]
+[EnableRateLimiting("auth")]
 public class AuthController : ControllerBase
 {
     private readonly ITokenService _tokenService;

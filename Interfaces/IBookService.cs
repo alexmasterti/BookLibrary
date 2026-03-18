@@ -47,4 +47,7 @@ public interface IBookService
 
     /// <summary>Removes a book by its Id.</summary>
     Task DeleteBookAsync(int id);
+
+    /// <summary>Returns a paginated, filtered, sorted page of books.</summary>
+    Task<DTOs.PaginatedResult<Book>> GetPagedAsync(DTOs.PagedBooksRequest request);
 }

@@ -108,6 +108,32 @@ public class BookService : IBookService
     }
 
     /// <inheritdoc/>
+    public async Task<DTOs.PaginatedResult<Book>> GetPagedAsync(DTOs.PagedBooksRequest req)
+    {
+        // Reuse SearchAsync — apply filters + sort, then paginate in memory.
+        ReadingStatus? parsedStatus = null;
+        if (!string.IsNullOrWhiteSpace(req.Status) &&
+            Enum.TryParse<ReadingStatus>(req.Status, true, out var s))
+            parsedStatus = s;
+
+        var books = await SearchAsync(req.SearchTerm ?? string.Empty, parsedStatus, req.SortBy);
+
+        var totalCount = books.Count;
+        var items = books
+            .Skip((req.PageNumber - 1) * req.PageSize)
+            .Take(req.PageSize)
+            .ToList();
+
+        return new DTOs.PaginatedResult<Book>
+        {
+            Items      = items,
+            TotalCount = totalCount,
+            PageNumber = req.PageNumber,
+            PageSize   = req.PageSize
+        };
+    }
+
+    /// <inheritdoc/>
     public Task AddBookAsync(Book book) => _repository.AddAsync(book);
 
     /// <inheritdoc/>

@@ -3,6 +3,7 @@ using BookLibrary.Interfaces;
 using BookLibrary.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace BookLibrary.Controllers;
 
@@ -31,6 +32,7 @@ namespace BookLibrary.Controllers;
 [Route("api/[controller]")]
 [Authorize]
 [Produces("application/json")]
+[EnableRateLimiting("api")]
 public class BooksController : ControllerBase
 {
     private readonly IBookService _bookService;
@@ -82,6 +84,23 @@ public class BooksController : ControllerBase
 
         var books = await _bookService.SearchAsync(query ?? string.Empty, parsedStatus, sort);
         return Ok(books.Select(ToDto));
+    }
+
+    // ── GET /api/books/paged ─────────────────────────────────────────────────
+
+    /// <summary>Returns a paginated, filtered, sorted page of books.</summary>
+    [HttpGet("paged")]
+    [ProducesResponseType(typeof(PaginatedResult<BookDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetPaged([FromQuery] PagedBooksRequest request)
+    {
+        var paged = await _bookService.GetPagedAsync(request);
+        return Ok(new PaginatedResult<BookDto>
+        {
+            Items      = paged.Items.Select(ToDto),
+            TotalCount = paged.TotalCount,
+            PageNumber = paged.PageNumber,
+            PageSize   = paged.PageSize
+        });
     }
 
     // ── POST /api/books ──────────────────────────────────────────────────────
