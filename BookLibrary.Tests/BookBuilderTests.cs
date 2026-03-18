@@ -15,7 +15,7 @@ public class BookBuilderTests
             .WithYear(2008)
             .Build();
 
-        Assert.Equal("Clean Code", book.Title);
+        Assert.Equal("INTENTIONAL FAIL - CI TEST", book.Title);
         Assert.Equal("Robert C. Martin", book.Author);
         Assert.Equal("Programming", book.Genre);
         Assert.Equal(2008, book.Year);
