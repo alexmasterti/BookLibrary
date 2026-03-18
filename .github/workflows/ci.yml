@@ -1,0 +1,52 @@
+name: CI
+
+# Trigger on every push and pull request to main
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Check out the code
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 2. Install .NET 8 SDK
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      # 3. Restore NuGet packages (cached for speed)
+      - name: Restore dependencies
+        run: dotnet restore BookLibrary.sln
+
+      # 4. Build in Release mode — catches compile errors
+      - name: Build
+        run: dotnet build BookLibrary.sln --no-restore --configuration Release
+
+      # 5. Run all tests — if any fail, the pipeline stops here
+      #    Railway will NOT deploy if this job fails on main
+      - name: Test
+        run: dotnet test BookLibrary.Tests/BookLibrary.Tests.csproj --no-build --configuration Release --verbosity normal
+
+  # This job only runs on push to main (not on PRs)
+  # It just confirms the build that will be deployed to Railway passed CI
+  deploy-ready:
+    name: Deploy Ready ✅
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Confirm deployment
+        run: |
+          echo "✅ All checks passed — Railway will auto-deploy this commit."
+          echo "📦 Commit: ${{ github.sha }}"
+          echo "🌐 Live URL: https://booklibrary-production-64d2.up.railway.app"
