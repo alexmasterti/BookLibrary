@@ -1,3 +1,4 @@
+using Asp.Versioning;
 using BookLibrary.DTOs;
 using BookLibrary.Interfaces;
 using BookLibrary.Models;
@@ -29,6 +30,8 @@ namespace BookLibrary.Controllers;
 ///   They are mapped to BookDto, giving the API its own stable contract.
 /// </summary>
 [ApiController]
+[ApiVersion("1.0")]
+[Route("api/v{version:apiVersion}/[controller]")]
 [Route("api/[controller]")]
 [Authorize]
 [Produces("application/json")]

@@ -2,6 +2,8 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Asp.Versioning;
+using MediatR;
 using Microsoft.OpenApi.Models;
 using BookLibrary.BackgroundServices;
 using BookLibrary.Data;
@@ -18,13 +20,40 @@ using FluentValidation.AspNetCore;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
+using Scalar.AspNetCore;
+using Serilog;
+using Serilog.Events;
+
+// ─── Serilog Bootstrap Logger ──────────────────────────────────────────────
+// CONCEPT: Serilog structured logging
+//   Replaces the default Microsoft console logger with Serilog.
+//   Serilog outputs structured log events — each field (timestamp, level,
+//   message, exception) is a typed property, not just a string.
+//   This makes logs searchable and filterable in tools like Seq, Splunk, or Datadog.
+//   We initialize a bootstrap logger here so that even startup errors are captured.
+Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
+    .MinimumLevel.Override("Microsoft.Hosting.Lifetime", LogEventLevel.Information)
+    .Enrich.FromLogContext()
+    .Enrich.WithMachineName()
+    .Enrich.WithEnvironmentName()
+    .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
+    .WriteTo.File("logs/booklibrary-.log", rollingInterval: RollingInterval.Day, retainedFileCountLimit: 7)
+    .CreateLogger();
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Replace default logging with Serilog
+builder.Host.UseSerilog();
 
 // ─── UI Framework ──────────────────────────────────────────────────────────
 builder.Services.AddRazorPages();
@@ -35,8 +64,47 @@ builder.Services.AddControllers()
     .AddJsonOptions(o =>
         o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 
+// ─── API Versioning ─────────────────────────────────────────────────────────
+// CONCEPT: API Versioning
+//   Allows the API to evolve without breaking existing clients.
+//   V1 clients continue to hit /api/v1/books and get the same response.
+//   V2 adds enriched fields (DaysInLibrary, IsRecentlyAdded, Era) without touching V1.
+//   Versioning is read from: URL segment (/api/v1/), header (X-API-Version), or query (?api-version=1.0)
+builder.Services.AddApiVersioning(options =>
+{
+    options.DefaultApiVersion = new ApiVersion(1, 0);
+    options.AssumeDefaultVersionWhenUnspecified = true;
+    options.ReportApiVersions = true;
+    options.ApiVersionReader = ApiVersionReader.Combine(
+        new UrlSegmentApiVersionReader(),
+        new HeaderApiVersionReader("X-API-Version"),
+        new QueryStringApiVersionReader("api-version")
+    );
+}).AddMvc().AddApiExplorer(options =>
+{
+    options.GroupNameFormat = "'v'VVV";
+    options.SubstituteApiVersionInUrl = true;
+});
+
 // ─── ProblemDetails (RFC 7807) ──────────────────────────────────────────────
 builder.Services.AddProblemDetails();
+
+// ─── Response Compression ───────────────────────────────────────────────────
+// CONCEPT: Response Compression
+//   Reduces the size of HTTP responses before sending to the client.
+//   Brotli (br) is newer and more efficient than Gzip — 15-25% better compression.
+//   All modern browsers support both. The client advertises support via Accept-Encoding header.
+//   Enabled for HTTPS too (safe because BREACH attack mitigations are in place for auth tokens).
+builder.Services.AddResponseCompression(options =>
+{
+    options.EnableForHttps = true;
+    options.Providers.Add<BrotliCompressionProvider>();
+    options.Providers.Add<GzipCompressionProvider>();
+});
+builder.Services.Configure<BrotliCompressionProviderOptions>(o =>
+    o.Level = System.IO.Compression.CompressionLevel.Fastest);
+builder.Services.Configure<GzipCompressionProviderOptions>(o =>
+    o.Level = System.IO.Compression.CompressionLevel.SmallestSize);
 
 // ─── Database ──────────────────────────────────────────────────────────────
 builder.Services.AddDbContext<AppDbContext>(options =>
@@ -133,6 +201,32 @@ builder.Services.AddRateLimiter(options =>
 builder.Services.AddHealthChecks()
     .AddDbContextCheck<AppDbContext>("database");
 
+// ─── OpenTelemetry ─────────────────────────────────────────────────────────
+// CONCEPT: OpenTelemetry — The 3 Pillars of Observability
+//   Logs    = what happened (Serilog handles this above)
+//   Metrics = how much / how often (request counts, duration histograms, error rates)
+//   Traces  = the full journey of ONE request across services (like a call stack in time)
+//
+//   In a microservices system, one user request might touch 10 services.
+//   OpenTelemetry lets you see the whole journey in one distributed trace.
+//   The ConsoleExporter is for development — in production swap for OTLP → Jaeger/Zipkin/Datadog.
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource => resource
+        .AddService(serviceName: "BookLibrary", serviceVersion: "2.0.0"))
+    .WithTracing(tracing => tracing
+        .AddAspNetCoreInstrumentation(options =>
+        {
+            options.RecordException = true;
+            // Don't trace health check calls — they're too noisy
+            options.Filter = ctx => !ctx.Request.Path.StartsWithSegments("/health");
+        })
+        .AddHttpClientInstrumentation()
+        .AddConsoleExporter())  // In production: swap for OTLP → Jaeger/Zipkin/Datadog
+    .WithMetrics(metrics => metrics
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddConsoleExporter());
+
 // ─── Swagger / OpenAPI ─────────────────────────────────────────────────────
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
@@ -207,6 +301,14 @@ builder.Services.AddScoped<IBookRecommendationService, BookRecommendationService
 // ─── CONCEPT: BackgroundService ────────────────────────────────────────────
 builder.Services.AddHostedService<LibraryStatsBackgroundService>();
 
+// ─── PATTERN: CQRS with MediatR ────────────────────────────────────────────
+// CONCEPT: MediatR + CQRS
+//   MediatR is a mediator/message-bus for .NET. Instead of controllers
+//   calling services directly, they send Commands and Queries through IMediator.
+//   MediatR finds the right IRequestHandler<TRequest, TResponse> and executes it.
+//   This decouples controllers from business logic completely.
+builder.Services.AddMediatR(cfg => cfg.RegisterServicesFromAssemblyContaining<Program>());
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 var app = builder.Build();
@@ -222,13 +324,18 @@ using (var scope = app.Services.CreateScope())
 // Must be registered before all other middleware so it catches everything.
 app.UseGlobalExceptionHandler();
 
+// ─── Response Compression (early in pipeline, before static files) ──────────
+app.UseResponseCompression();
+
 if (app.Environment.IsDevelopment())
 {
-    app.UseSwagger();
-    app.UseSwaggerUI(c =>
+    // Scalar API Reference — modern, beautiful alternative to Swagger UI
+    // Accessible at: /scalar/v1
+    app.UseSwagger(options => options.RouteTemplate = "openapi/{documentName}.json");
+    app.MapScalarApiReference(options =>
     {
-        c.SwaggerEndpoint("/swagger/v1/swagger.json", "BookLibrary API v1");
-        c.DocumentTitle = "BookLibrary API";
+        options.Title = "BookLibrary API";
+        options.Theme = ScalarTheme.DeepSpace;
     });
 }
 else
@@ -238,6 +345,15 @@ else
 
 app.UseHttpsRedirection();
 app.UseStaticFiles();
+
+// ─── Serilog Request Logging ────────────────────────────────────────────────
+// Replaces verbose ASP.NET Core request logs with a single structured line per request.
+// Format: "GET /api/books responded 200 in 12.3ms"
+app.UseSerilogRequestLogging(options =>
+{
+    options.MessageTemplate = "{RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed:0.0}ms";
+});
+
 app.UseRouting();
 
 // ─── Rate Limiting (after routing, before auth) ────────────────────────────
@@ -279,3 +395,6 @@ app.MapBlazorHub();
 app.MapFallbackToPage("/_Host");
 
 app.Run();
+
+// Required to make Program class accessible to integration tests
+public partial class Program { }

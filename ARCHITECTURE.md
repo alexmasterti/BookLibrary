@@ -1,1317 +1,1419 @@
-# BookLibrary — Architecture & Design Guide
+# BookLibrary Architecture Guide
 
-> **Who this is for:** Junior developers joining the project, or anyone who wants to understand
-> not just *what* the code does, but *why* it was written this way.
->
-> This is not documentation for documentation's sake. Every decision in this codebase has a reason.
-> This file explains those reasons.
+> **Who this is for:** Junior to mid-level developers who want to understand modern .NET patterns, why they exist, and how they connect. Every section answers: *What is it? Why does it exist? How does it work here? What to learn next?*
 
 ---
 
 ## Table of Contents
 
-1. [What Is This App?](#what-is-this-app)
-2. [Project Structure](#project-structure)
-3. [How the Layers Talk to Each Other](#how-the-layers-talk-to-each-other)
-4. [OOP Pillars](#oop-pillars)
-5. [Design Patterns](#design-patterns)
-6. [SOLID Principles](#solid-principles)
-7. [Dependency Injection](#dependency-injection)
-8. [REST API & JWT Authentication](#rest-api--jwt-authentication)
-9. [FluentValidation](#fluentvalidation)
-10. [Pagination](#pagination)
-11. [Caching — The Decorator Chain](#caching--the-decorator-chain)
-12. [Health Checks](#health-checks)
-13. [Global Exception Handling & ProblemDetails](#global-exception-handling--problemdetails)
-14. [Rate Limiting](#rate-limiting)
-15. [AI Book Recommendations](#ai-book-recommendations)
-16. [Options Pattern](#options-pattern)
-17. [Middleware](#middleware)
-18. [Background Service](#background-service)
-19. [UI Layer — Blazor](#ui-layer--blazor)
-20. [Unit Testing](#unit-testing)
-21. [Middleware Pipeline Order — Why It Matters](#middleware-pipeline-order--why-it-matters)
-22. [How to Add a New Feature](#how-to-add-a-new-feature)
-23. [Key Takeaways](#key-takeaways)
+1. [Project Overview](#1-project-overview)
+2. [Solution Structure](#2-solution-structure)
+3. [Design Patterns](#3-design-patterns)
+   - Repository Pattern
+   - Decorator Pattern
+   - Strategy Pattern
+   - Specification Pattern
+   - Factory + Builder Pattern
+   - Options Pattern
+4. [SOLID Principles](#4-solid-principles)
+5. [API Design](#5-api-design)
+   - REST Controllers
+   - JWT Authentication
+   - FluentValidation
+   - Rate Limiting
+   - ProblemDetails (RFC 7807)
+   - API Versioning
+6. [Data Layer](#6-data-layer)
+   - Entity Framework Core + SQLite
+   - Repository Abstraction
+   - In-Memory Caching
+7. [Observability](#7-observability)
+   - Serilog Structured Logging
+   - Health Checks
+   - OpenTelemetry (Traces + Metrics)
+8. [Resilience](#8-resilience)
+   - Polly Resilience Pipeline
+   - Response Compression
+9. [CQRS + MediatR](#9-cqrs--mediatr)
+10. [AI Integration](#10-ai-integration)
+11. [Background Services](#11-background-services)
+12. [Testing](#12-testing)
+    - Unit Tests
+    - Integration Tests
+13. [Infrastructure](#13-infrastructure)
+    - Docker + docker-compose
+    - GitHub Actions CI/CD
+    - Railway Deployment
+14. [.NET Aspire (Coming Soon)](#14-net-aspire-coming-soon)
+15. [Learning Path](#15-learning-path)
 
 ---
 
-## What Is This App?
+## 1. Project Overview
 
-BookLibrary is a personal reading tracker. You can:
-- Add books and mark them as *Want to Read*, *Currently Reading*, or *Read*
-- Search, filter, and sort your list
-- Get AI-powered book recommendations based on your reading history
-- Interact via a web UI (Blazor) or a REST API
+BookLibrary is a **full-stack .NET 8 application** that manages a personal book collection. It has two interfaces:
 
-**Under the hood, it is intentionally over-engineered** — not because a book tracker needs this
-complexity, but because it is a learning project designed to demonstrate as many real-world
-software engineering patterns as possible in one working application.
+- **Blazor Server UI** — a real-time, component-based web UI running on the server
+- **REST API** — a JSON API secured with JWT tokens, consumed by external clients
 
-Think of it as a living reference you can read, run, and modify.
+**Technology stack:**
+| Layer | Technology |
+|-------|------------|
+| UI | Blazor Server (.NET 8) |
+| API | ASP.NET Core Web API |
+| Database | SQLite via Entity Framework Core 8 |
+| Auth | JWT Bearer Tokens |
+| AI | Anthropic Claude API |
+| Logging | Serilog |
+| Observability | OpenTelemetry |
+| Resilience | Polly |
+| Testing | xUnit + Moq + WebApplicationFactory |
+| CI/CD | GitHub Actions + Railway |
+
+**Why Blazor Server instead of Blazor WebAssembly?**
+Blazor Server runs on the server and pushes UI updates to the browser via SignalR. This is faster to start (no large WASM download), works on older browsers, and keeps business logic server-side. The tradeoff: requires constant network connection and scales less easily under heavy load. For a personal library app, this tradeoff is fine.
 
 ---
 
-## Project Structure
+## 2. Solution Structure
 
 ```
 BookLibrary/
-│
-├── Models/                         ← Domain objects (what the app is about)
-│   ├── BaseEntity.cs               ← Abstract base: Id + CreatedAt for every entity
-│   ├── Book.cs                     ← The main domain model
-│   └── ReadingStatus.cs            ← Enum: WantToRead | CurrentlyReading | Read
-│
-├── Interfaces/                     ← Contracts (what things CAN do, not how)
-│   ├── IRepository.cs              ← Generic CRUD contract for any entity
-│   ├── IBookRepository.cs          ← Book-specific repository contract
-│   ├── IBookService.cs             ← All book business operations
-│   ├── IBookFactory.cs             ← Creates Book objects
-│   ├── IBookRecommendationService  ← AI recommendation contract
-│   ├── ISortStrategy.cs            ← Pluggable sort algorithm contract
-│   └── ISpecification.cs           ← Filter rule contract
-│
-├── Repositories/                   ← Data access layer
-│   ├── Repository.cs               ← Generic base (CRUD via EF Core)
-│   ├── BookRepository.cs           ← Concrete book data access
-│   ├── LoggingBookRepository.cs    ← Decorator: adds logging to any repo
-│   └── CachingBookRepository.cs    ← Decorator: adds caching to any repo
-│
-├── Services/                       ← Business logic layer
-│   ├── BookService.cs              ← Core book operations + pagination
-│   ├── BookRecommendationService.cs← Calls Anthropic Claude API
-│   └── TokenService.cs             ← Generates and validates JWT tokens
-│
-├── Controllers/                    ← REST API endpoints
-│   ├── BooksController.cs          ← CRUD + search + pagination endpoints
-│   ├── AuthController.cs           ← POST /api/auth/login
-│   └── RecommendationsController.cs← GET /api/recommendations
-│
-├── DTOs/                           ← API request/response shapes
-│   ├── BookDto.cs                  ← What the API returns for a book
-│   ├── CreateBookRequest.cs        ← What POST /api/books expects
-│   ├── UpdateBookRequest.cs        ← What PUT /api/books/{id} expects
-│   ├── PagedBooksRequest.cs        ← Query params for paginated endpoint
-│   ├── PaginatedResult.cs          ← Generic paginated response wrapper
-│   ├── BookRecommendationResult.cs ← AI recommendation response
-│   ├── RecommendedBook.cs          ← A single AI recommendation
-│   ├── LoginRequest.cs             ← Auth input
-│   └── LoginResponse.cs            ← Auth output (token + expiry)
-│
-├── Validators/                     ← FluentValidation rules
-│   ├── CreateBookValidator.cs      ← Validates POST body
-│   └── UpdateBookValidator.cs      ← Validates PUT body
-│
-├── Specifications/                 ← Composable filter rules
-│   ├── TitleOrAuthorContainsSpecification.cs
-│   ├── StatusSpecification.cs
-│   └── AndSpecification.cs         ← Combines two specs with AND
-│
-├── Strategies/                     ← Pluggable sort algorithms
-│   ├── TitleSortStrategy.cs
-│   ├── AuthorSortStrategy.cs
-│   └── YearSortStrategy.cs
-│
-├── Factories/                      ← Centralized object creation
-│   └── BookFactory.cs
-│
-├── Builders/                       ← Step-by-step object assembly
-│   └── BookBuilder.cs              ← Fluent builder for Book
-│
-├── Options/                        ← Strongly-typed config classes
-│   ├── JwtOptions.cs
-│   ├── CacheOptions.cs
-│   ├── LibraryStatsOptions.cs
-│   └── AnthropicOptions.cs         ← AI API key + model name
-│
-├── Middleware/                     ← Custom HTTP pipeline components
-│   ├── RequestTimingMiddleware.cs  ← Logs ms per request
-│   └── GlobalExceptionMiddleware.cs← Catches all errors → RFC 7807 JSON
-│
-├── BackgroundServices/
-│   └── LibraryStatsBackgroundService.cs ← Periodic stats logger
-│
-├── Data/
-│   └── AppDbContext.cs             ← EF Core database context
-│
-├── Pages/                          ← Blazor UI pages
-│   ├── Index.razor                 ← Dashboard
-│   ├── Books.razor                 ← Book list + search + filter + sort
-│   ├── BookForm.razor              ← Add / edit form
-│   └── Recommendations.razor       ← AI recommendations UI
-│
-├── Shared/                         ← Reusable Blazor components
-│   ├── MainLayout.razor            ← App shell
-│   ├── NavMenu.razor               ← Sidebar navigation
-│   ├── Toast.razor                 ← Success/error notification
-│   └── ConfirmDialog.razor         ← Modal confirmation dialog
-│
-├── wwwroot/css/site.css            ← CSS design system (variables, dark/light theme)
-├── appsettings.json                ← Configuration (JWT, Cache, Anthropic, etc.)
-└── Program.cs                      ← Composition root — ALL wiring happens here
+├── BackgroundServices/       # Long-running tasks (stats logger)
+├── Builders/                 # BookBuilder — fluent, validated construction
+├── Controllers/              # REST API endpoints
+│   ├── V2/                   # API Version 2 controllers
+│   ├── AuthController        # POST /api/auth/login
+│   ├── BooksController       # CRUD for books (V1)
+│   ├── BooksCqrsController   # Same CRUD but via MediatR/CQRS
+│   └── RecommendationsController
+├── CQRS/                     # Commands, Queries, Handlers (MediatR)
+│   ├── Commands/             # CreateBookCommand, DeleteBookCommand
+│   ├── Handlers/             # One handler per command/query
+│   └── Queries/              # GetAllBooksQuery, SearchBooksQuery, etc.
+├── Data/                     # EF Core DbContext + migrations
+├── DTOs/                     # Data Transfer Objects (API shapes)
+│   └── V2/                   # V2-only DTOs with computed fields
+├── Factories/                # BookFactory — delegates to BookBuilder
+├── Interfaces/               # Abstractions (the 'I' prefix interfaces)
+├── Middleware/                # Request pipeline extensions
+│   ├── GlobalExceptionMiddleware
+│   └── RequestTimingMiddleware
+├── Models/                   # Domain models (Book, BaseEntity, enums)
+├── Options/                  # Typed configuration classes
+├── Pages/                    # Blazor pages (.razor files)
+├── Repositories/             # Data access implementations + Decorators
+├── Services/                 # Business logic services
+│   ├── BookLibraryTelemetry  # Custom tracing spans
+│   ├── BookRecommendationService
+│   ├── BookService
+│   └── TokenService
+├── Shared/                   # Blazor shared components (Layout, Toast, etc.)
+├── Specifications/           # Composable filter rules
+├── Strategies/               # Sort algorithms (pluggable)
+├── Validators/               # FluentValidation rules
+├── Program.cs                # Composition root — ALL wiring happens here
+├── BookLibrary.Tests/        # Unit + Integration tests
+└── ARCHITECTURE.md           # You are here
 ```
 
 ---
 
-## How the Layers Talk to Each Other
-
-This is the most important diagram in the entire file. Read it once and the rest will click.
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     USER / BROWSER                          │
-└────────────┬──────────────────────────┬────────────────────-┘
-             │ Blazor (WebSocket)        │ REST API (HTTP)
-             ▼                           ▼
-┌─────────────────────┐      ┌─────────────────────────┐
-│   Pages/*.razor     │      │  Controllers/*.cs        │
-│  (Blazor UI layer)  │      │  (API layer)             │
-└────────┬────────────┘      └──────────┬───────────────┘
-         │                              │
-         │  Both inject IBookService    │
-         ▼                              ▼
-┌────────────────────────────────────────────────────────┐
-│                   BookService                          │
-│  (Business logic: search, filter, sort, paginate)     │
-│  Uses: Strategy Pattern + Specification Pattern        │
-└────────────────────────┬───────────────────────────────┘
-                         │ Calls IBookRepository
-                         ▼
-┌────────────────────────────────────────────────────────┐
-│  CachingBookRepository  (Decorator — outermost)        │
-│  → LoggingBookRepository (Decorator — middle)          │
-│    → BookRepository (concrete — innermost)             │
-│      → AppDbContext (EF Core)                          │
-│        → SQLite file (books.db)                        │
-└────────────────────────────────────────────────────────┘
-```
-
-**The golden rule:** each layer only knows about the layer directly below it,
-and it only knows it through an **interface** — never a concrete class.
-
-This means you can swap SQLite for SQL Server, swap the cache implementation,
-or replace the UI framework, and the business logic code does not change.
-
----
-
-## OOP Pillars
-
-These are the four foundational concepts of object-oriented programming.
-This project demonstrates all four in real, working code.
-
-### 1. Abstraction — Hide the Details
-
-Show callers *what* they can do, not *how* it works internally.
-
-- `IBookService` — Blazor pages call `GetAllBooksAsync()`. They have no idea if the
-  data comes from SQLite, an API, or a text file. That is abstraction.
-- All `I*` interfaces are abstractions — they are contracts, not implementations.
-- `BaseEntity` — abstract class that cannot be instantiated. It forces subclasses
-  to inherit `Id` and `CreatedAt` without being usable on their own.
-
-### 2. Encapsulation — Protect the State
-
-Bundle data and the code that operates on it into one unit. Prevent external
-code from putting an object into an invalid state.
-
-- `BookBuilder` — the `_book` field is `private`. You cannot set `Title` directly
-  on a half-built book. You must go through `WithTitle()`. `Build()` validates
-  everything before returning the object. A bad book cannot escape.
-- `Repository<T>` — `_dbSet` is `private`. Subclasses can use `_context` (protected)
-  but cannot reach into the raw DbSet and bypass the repository's methods.
-
-### 3. Inheritance — Reuse Without Duplication
-
-Build new types on top of existing ones, inheriting their behaviour.
-
-- `Book` inherits from `BaseEntity` — it automatically has `Id` and `CreatedAt`
-  without declaring them. Every future entity (Author, Review, etc.) gets the same.
-- `BookRepository` inherits from `Repository<Book>` — it gets `GetByIdAsync`,
-  `AddAsync`, `UpdateAsync`, `DeleteAsync` for free, and only overrides `GetAllAsync`
-  to add eager loading.
-- `IBookRepository` inherits from `IRepository<Book>` — it gets all five method
-  signatures and can add book-specific ones.
-
-### 4. Polymorphism — One Interface, Many Behaviours
-
-Write code that works with any implementation of an interface, without caring
-which specific class runs at runtime.
-
-- `ISortStrategy<Book>` — `BookService.SearchAsync()` calls `strategy.Sort(books)`.
-  The same line of code can run `TitleSortStrategy`, `AuthorSortStrategy`, or
-  `YearSortStrategy` — decided at runtime, not at compile time.
-- `IBookRepository` — `BookService` calls `_repository.GetAllAsync()`. At runtime,
-  this actually runs through the full decorator chain: Caching → Logging → EF Core.
-  `BookService` is completely unaware of this.
-
----
-
-## Design Patterns
-
-Design patterns are proven solutions to recurring problems. They have names
-so teams can communicate clearly: "use a decorator here" means something specific.
+## 3. Design Patterns
 
 ### Repository Pattern
 
-**Files:** `IRepository.cs`, `IBookRepository.cs`, `Repository.cs`, `BookRepository.cs`
+**What it is:** A class that hides the database from the rest of the app. Instead of writing `dbContext.Books.Where(...).ToList()` everywhere, you call `bookRepository.GetAllAsync()`.
 
-**Problem:** Business logic and database code get tangled together. Testing becomes
-impossible without a real database. Swapping databases means rewriting half the app.
+**Why it exists:**
+- Centralizes all data access in one place
+- Makes services testable (you can mock a repository without needing a real database)
+- Lets you swap databases later without changing business logic
 
-**Solution:** All database access goes through a repository. The service layer only
-talks to `IBookRepository`. It never touches `DbContext`, SQL, or EF Core directly.
+**How it works here:**
 
 ```
-BookService → IBookRepository → BookRepository → EF Core → SQLite
+IBookRepository (interface)
+   ↑ implemented by
+BookRepository (concrete — uses EF Core + SQLite)
 ```
 
-**Real benefit:** In unit tests, you replace `IBookRepository` with a fake (mock).
-Tests run in milliseconds with no database. `BookService` never knows the difference.
+The interface lives in `Interfaces/` and defines the contract. Business logic (`BookService`) only sees the interface — never the concrete class.
 
-### Generic Repository
-
-**File:** `Repository.cs`
-
-**Problem:** Every entity needs the same five operations (GetAll, GetById, Add, Update,
-Delete). Copy-pasting them for every entity is wasteful and error-prone.
-
-**Solution:** Implement CRUD once using `DbContext.Set<T>()`. Any entity gets all five
-operations by creating one class that extends `Repository<ThatEntity>`.
-
+**Code example:**
 ```csharp
-// Adding a new entity? Just do this:
-public class AuthorRepository : Repository<Author>
+// Interface (what callers see)
+public interface IBookRepository
 {
-    public AuthorRepository(AppDbContext context) : base(context) { }
-    // Done. All 5 CRUD operations inherited for free.
+    Task<IEnumerable<Book>> GetAllAsync();
+    Task<Book?> GetByIdAsync(int id);
+    Task AddAsync(Book book);
+    Task UpdateAsync(Book book);
+    Task DeleteAsync(int id);
+}
+
+// Concrete (hidden behind the interface)
+public class BookRepository : IBookRepository
+{
+    private readonly AppDbContext _db;
+    // ... uses _db.Books to actually query SQLite
 }
 ```
+
+**What to learn next:** Generic Repository pattern, Unit of Work pattern, Domain-Driven Design (DDD) Repositories.
+
+---
 
 ### Decorator Pattern
 
-**Files:** `LoggingBookRepository.cs`, `CachingBookRepository.cs`
+**What it is:** Wrapping an object with another object that adds behavior, without changing the original object or its callers.
 
-**Problem:** You want to add logging and caching to the repository, but you
-do not want to put that code inside `BookRepository`. That would violate the
-Single Responsibility Principle — `BookRepository` should only do data access.
+**Why it exists:**
+- Adds cross-cutting concerns (caching, logging) without polluting core logic
+- Each decorator does ONE thing (Single Responsibility)
+- Decorators compose — you can stack them in any order
 
-**Solution:** Wrap the repository in another class that implements the same interface,
-does its cross-cutting work (log, cache), then delegates to the inner repo.
+**How it works here:**
 
 ```
-IBookRepository (what the service sees)
-    └── CachingBookRepository  ← checks cache; calls inner if miss
-          └── LoggingBookRepository  ← logs every call; calls inner
-                └── BookRepository  ← actual EF Core database work
+CachingBookRepository (outer — checks cache first, wraps...)
+    → LoggingBookRepository (middle — logs before/after, wraps...)
+        → BookRepository (inner — actual database calls)
 ```
 
-The key insight: every layer implements `IBookRepository`. `BookService` calls
-`_repository.GetAllAsync()` — it has no idea three classes run before EF Core does.
+When `BookService` calls `_repository.GetAllAsync()`, the call goes through all three layers:
 
-**Adding a new cross-cutting concern** (e.g., retry logic, metrics) means creating
-one new class, not modifying any existing code. This is the Open/Closed Principle.
+1. **CachingBookRepository** — checks MemoryCache. If hit, return cached data immediately (no DB call). If miss, call the next layer.
+2. **LoggingBookRepository** — logs "Getting books from DB..." then calls BookRepository, then logs the result.
+3. **BookRepository** — actually queries SQLite.
 
-### Factory Pattern
-
-**Files:** `IBookFactory.cs`, `BookFactory.cs`
-
-**Problem:** Creating a `Book` requires multiple steps and validation. If you do this
-in 10 different places, a change to the Book constructor breaks 10 places.
-
-**Solution:** One factory owns all creation logic. Callers ask `_factory.Create(...)`.
-The factory decides how to build the object. Change the factory, nothing else changes.
-
+**The wiring in Program.cs:**
 ```csharp
-// The controller doesn't know how Book is constructed:
-var book = _bookFactory.Create(request.Title, request.Author, request.Genre, request.Year, status);
+// Register concrete BookRepository (innermost)
+builder.Services.AddScoped<BookRepository>();
+
+// Register LoggingBookRepository wrapping BookRepository
+builder.Services.AddScoped<LoggingBookRepository>(sp =>
+    new LoggingBookRepository(
+        sp.GetRequiredService<BookRepository>(),
+        sp.GetRequiredService<ILogger<LoggingBookRepository>>()));
+
+// Register CachingBookRepository (outermost) as IBookRepository
+// This is what all callers receive when they ask for IBookRepository
+builder.Services.AddScoped<IBookRepository>(sp =>
+    new CachingBookRepository(
+        sp.GetRequiredService<LoggingBookRepository>(), ...));
 ```
 
-### Builder Pattern
+**What to learn next:** Chain of Responsibility pattern, AOP (Aspect-Oriented Programming), Middleware pattern (which is a form of Decorator).
 
-**File:** `BookBuilder.cs`
-
-**Problem:** Constructors with many parameters are hard to read and easy to get wrong.
-`new Book("", null, "Sci-Fi", 1984, status)` — which argument is which?
-
-**Solution:** A fluent builder lets you set properties by name, in any order,
-with a single `Build()` call at the end that validates everything.
-
-```csharp
-var book = new BookBuilder()
-    .WithTitle("Clean Code")
-    .WithAuthor("Robert C. Martin")
-    .WithGenre("Programming")
-    .WithYear(2008)
-    .Build();
-```
-
-`Build()` throws if Title or Author is missing. An invalid book can never be created.
-
-**Factory + Builder working together:**
-`BookFactory.Create()` calls `BookBuilder` internally. The factory decides the
-policy ("what to build"). The builder decides the steps ("how to assemble it").
+---
 
 ### Strategy Pattern
 
-**Files:** `ISortStrategy.cs`, `TitleSortStrategy.cs`, `AuthorSortStrategy.cs`, `YearSortStrategy.cs`
+**What it is:** Define a family of algorithms, put each in its own class, and make them interchangeable at runtime.
 
-**Problem:** Sorting logic starts small, then grows into a mess of if/else:
+**Why it exists:**
+- Avoids giant if/switch chains for different behaviors
+- Each strategy is independently testable
+- Adding a new algorithm doesn't change existing code (Open/Closed Principle)
 
-```csharp
-// This grows forever. Every new sort option = more branches.
-if (sort == "Title")  return books.OrderBy(b => b.Title);
-if (sort == "Author") return books.OrderBy(b => b.Author);
-if (sort == "Year")   return books.OrderBy(b => b.Year);
-```
-
-**Solution:** Each sort algorithm is its own class implementing `ISortStrategy<Book>`.
-The service just calls `strategy.Sort(books)`. Adding a new sort means adding
-one new class — zero changes to `BookService`.
+**How it works here:**
 
 ```csharp
-// BookService — never changes when new sorts are added:
-var strategy = _sortStrategies.FirstOrDefault(s => s.Name == sortStrategyName)
-               ?? _sortStrategies.First();
-return strategy.Sort(books).ToList();
+// The interface (what BookService uses)
+public interface ISortStrategy<T>
+{
+    string Name { get; }
+    IQueryable<T> Sort(IQueryable<T> query);
+}
+
+// Three concrete strategies
+public class TitleSortStrategy  : ISortStrategy<Book> { /* OrderBy Title */ }
+public class AuthorSortStrategy : ISortStrategy<Book> { /* OrderBy Author */ }
+public class YearSortStrategy   : ISortStrategy<Book> { /* OrderBy Year */ }
 ```
 
-**How DI makes it work:**
-```csharp
-// All three registered for the same interface.
-// ASP.NET Core automatically collects them into IEnumerable<ISortStrategy<Book>>.
-builder.Services.AddScoped<ISortStrategy<Book>, TitleSortStrategy>();
-builder.Services.AddScoped<ISortStrategy<Book>, AuthorSortStrategy>();
-builder.Services.AddScoped<ISortStrategy<Book>, YearSortStrategy>();
-```
+When a user requests `GET /api/books/search?sort=author`, `BookService` looks up the matching strategy by name and calls `.Sort(query)` on it. The service doesn't know or care which algorithm runs.
+
+**What to learn next:** Command pattern, State pattern, Template Method pattern.
+
+---
 
 ### Specification Pattern
 
-**Files:** `ISpecification.cs`, `TitleOrAuthorContainsSpecification.cs`, `StatusSpecification.cs`, `AndSpecification.cs`
+**What it is:** Encapsulate a filter rule in its own class, and combine rules with AND/OR/NOT operators.
 
-**Problem:** Filtering logic becomes complex and scattered. You end up with
-long LINQ chains mixed into business logic that are hard to name, reuse, or test.
+**Why it exists:**
+- Composable — `new StatusSpec(Reading).And(new TitleContains("dragon"))`
+- Testable — you can test each filter rule in isolation
+- Reusable — the same spec can be used in the API and in background jobs
 
-**Solution:** Each filter rule is a named class with one method: `IsSatisfiedBy(item)`.
-Rules can be combined using `AndSpecification`.
-
-```csharp
-// Each rule is readable, named, and independently testable:
-var textRule   = new TitleOrAuthorContainsSpecification("Tolkien");
-var statusRule = new StatusSpecification(ReadingStatus.Read);
-
-// Combine them — AndSpecification is itself a specification:
-var both = new AndSpecification<Book>(textRule, statusRule);
-
-// Apply — one clean call:
-var filtered = books.Where(both.IsSatisfiedBy).ToList();
-```
-
-`AndSpecification` implements `ISpecification<T>` — so it can be nested
-inside another `AndSpecification`. This is the **Composite Pattern**.
-
----
-
-## SOLID Principles
-
-SOLID is an acronym for five principles that make code easier to maintain,
-extend, and test. This project applies all five deliberately.
-
-| Letter | Principle | What It Means | Where You See It |
-|--------|-----------|---------------|-----------------|
-| **S** | Single Responsibility | One class = one job | `BookRepository` only does DB access. `LoggingBookRepository` only logs. `BookBuilder` only builds. |
-| **O** | Open/Closed | Open for extension, closed for modification | Adding a new sort = new class, zero changes to `BookService`. Adding caching = new Decorator, `BookRepository` unchanged. |
-| **L** | Liskov Substitution | Subtypes must be replaceable for their parent type | `LoggingBookRepository` can be used anywhere `IBookRepository` is expected. `AuthorSortStrategy` anywhere `ISortStrategy<Book>` is expected. |
-| **I** | Interface Segregation | Interfaces should be small and focused | `IRepository<T>` has 5 methods. `ISpecification<T>` has 1 method. No interface forces implementors to have methods they don't need. |
-| **D** | Dependency Inversion | High-level code depends on abstractions, not concretions | `BookService` depends on `IBookRepository`, never `BookRepository`. Pages depend on `IBookService`, never `BookService`. |
-
----
-
-## Dependency Injection
-
-**What is it?** Instead of a class creating its own dependencies with `new`,
-it declares what it needs in its constructor and the framework provides it.
-
-**Why does it matter?** It is the mechanism that makes every pattern in this
-project practical. Without DI, you could not swap implementations, mock in tests,
-or wire the decorator chain automatically.
+**How it works here:**
 
 ```csharp
-// Without DI — tightly coupled, untestable:
-public class BookService
+// Base abstraction
+public abstract class Specification<T>
 {
-    private readonly BookRepository _repo = new BookRepository(new AppDbContext(...));
-    // Can't replace BookRepository with a mock. Can't test without a database.
+    public abstract bool IsSatisfiedBy(T entity);
+    public Specification<T> And(Specification<T> other)
+        => new AndSpecification<T>(this, other);
 }
 
-// With DI — loosely coupled, testable:
-public class BookService
+// Example concrete spec
+public class StatusSpecification : Specification<Book>
 {
-    private readonly IBookRepository _repo;
-    public BookService(IBookRepository repo) { _repo = repo; }
-    // DI provides whatever implements IBookRepository. Tests provide a mock.
+    private readonly ReadingStatus _status;
+    public bool IsSatisfiedBy(Book book) => book.Status == _status;
 }
 ```
 
-**Program.cs is the Composition Root** — the one place where every
-abstraction is wired to its concrete implementation.
-
+Usage in `BookService.SearchAsync`:
 ```csharp
-// The full wiring for the repository chain:
-builder.Services.AddScoped<BookRepository>();                    // innermost concrete
-builder.Services.AddScoped<LoggingBookRepository>(sp => ...);   // middle decorator
-builder.Services.AddScoped<IBookRepository>(sp => ...);         // outermost — what gets injected
+Specification<Book> spec = new TitleOrAuthorContainsSpecification(query);
+if (status.HasValue)
+    spec = spec.And(new StatusSpecification(status.Value));
 
-// Service wired to its interface:
-builder.Services.AddScoped<IBookService, BookService>();
-
-// Singleton — stateless, safe to share across all requests:
-builder.Services.AddSingleton<IBookFactory, BookFactory>();
-builder.Services.AddSingleton<ITokenService, TokenService>();
+return await _repository.SearchAsync(spec);
 ```
 
-**Service lifetimes — this is important:**
-
-| Lifetime | Created | Destroyed | Use when |
-|----------|---------|-----------|----------|
-| `Singleton` | Once at startup | App shuts down | Stateless services (factories, token generators) |
-| `Scoped` | Once per HTTP request / Blazor circuit | Request ends | Services that share a `DbContext` |
-| `Transient` | Every time it is requested | After use | Lightweight, stateless utilities |
-
-**The most common mistake:** injecting a `Scoped` service into a `Singleton`.
-The Scoped service gets "captured" and lives forever — `DbContext` leaks,
-data gets stale. See [Background Service](#background-service) for the solution.
+**What to learn next:** Query Specification with EF Core `IQueryable`, Domain events, Aggregate roots.
 
 ---
 
-## REST API & JWT Authentication
+### Factory + Builder Pattern
 
-The app exposes a full REST API alongside the Blazor UI.
-Both the UI and the API share the same `IBookService` — zero duplication.
+**What it is:**
+- **Builder** constructs complex objects step-by-step with validation
+- **Factory** provides a simple creation API that delegates to the Builder
 
-### Endpoints
+**Why it exists:**
+- Centralizes creation logic — if you need to change how a Book is created, you change ONE place
+- Builder validates inputs before creating the object (no invalid `Book` can exist)
+- Factory provides a clean interface (callers don't need to know about the Builder)
 
-| Method | Route | Auth | Description |
-|--------|-------|------|-------------|
-| POST | `/api/auth/login` | ❌ | Exchange credentials for a JWT token |
-| GET | `/api/books` | ✅ | Get all books |
-| GET | `/api/books/{id}` | ✅ | Get a single book |
-| GET | `/api/books/search` | ✅ | Search with filters and sort |
-| GET | `/api/books/paged` | ✅ | Paginated list |
-| POST | `/api/books` | ✅ | Create a book |
-| PUT | `/api/books/{id}` | ✅ | Update a book |
-| DELETE | `/api/books/{id}` | ✅ | Delete a book |
-| GET | `/api/recommendations` | ✅ | AI-powered recommendations |
-| GET | `/health` | ❌ | Simple health check |
-| GET | `/health/detail` | ❌ | Detailed health JSON |
+**How it works here:**
 
-### JWT Authentication Flow
+```csharp
+// Builder — fluent API with validation
+public class BookBuilder
+{
+    private string _title = "";
+    private string _author = "";
 
-JWT (JSON Web Token) is a stateless authentication mechanism. The server never
-stores sessions — the token itself contains the user's identity, signed with a secret key.
+    public BookBuilder WithTitle(string title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+            throw new ArgumentException("Title is required");
+        _title = title;
+        return this;
+    }
 
+    public Book Build() => new Book { Title = _title, Author = _author, ... };
+}
+
+// Factory — simple API for controllers/services to use
+public class BookFactory : IBookFactory
+{
+    public Book Create(string title, string author, ...) =>
+        new BookBuilder()
+            .WithTitle(title)
+            .WithAuthor(author)
+            .Build();
+}
 ```
-Step 1: Client POSTs { username, password } to /api/auth/login
-Step 2: Server validates credentials → generates signed JWT → returns token
-Step 3: Client stores token, sends it on every future request:
-        Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-Step 4: JWT middleware validates the signature → populates HttpContext.User
-Step 5: [Authorize] attribute allows or denies access based on that identity
-```
 
-**Why stateless?** The server does not need to store sessions in a database.
-Any server instance can validate the token using the shared secret key.
-This makes JWT ideal for distributed systems and microservices.
-
-**Security note:** In this project, the JWT key is in `appsettings.json` for
-development convenience. In production, it must come from environment variables
-or a secrets manager — never committed to source control.
+**What to learn next:** Abstract Factory, Prototype pattern, Object Mother pattern for tests.
 
 ---
 
-## FluentValidation
+### Options Pattern
 
-**Files:** `Validators/CreateBookValidator.cs`, `Validators/UpdateBookValidator.cs`
+**What it is:** Bind JSON configuration to a strongly-typed C# class.
 
-**Problem:** Validation logic ends up scattered — some in the controller, some in
-the service, some nowhere. Error messages are inconsistent and hard to test.
+**Why it exists:**
+- No magic strings — `"Jwt:Key"` becomes `jwtOptions.Key`
+- IntelliSense and compile-time safety
+- Validated at startup rather than at runtime
+- Easy to test (just create an instance with test values)
 
-**Solution:** FluentValidation gives each request its own dedicated validator class
-with explicit, readable rules that produce consistent error messages.
+**How it works here:**
+
+```json
+// appsettings.json
+{
+  "Jwt": {
+    "Key": "your-secret-key",
+    "ExpiryMinutes": 60
+  }
+}
+```
 
 ```csharp
-// CreateBookValidator.cs
+// Options class
+public class JwtOptions
+{
+    public const string SectionName = "Jwt";
+    public string Key { get; set; } = string.Empty;
+    public int ExpiryMinutes { get; set; } = 60;
+}
+
+// Registration in Program.cs
+builder.Services.Configure<JwtOptions>(
+    builder.Configuration.GetSection(JwtOptions.SectionName));
+
+// Injection in TokenService
+public class TokenService
+{
+    private readonly JwtOptions _options;
+    public TokenService(IOptions<JwtOptions> options)
+        => _options = options.Value;
+}
+```
+
+**What to learn next:** `IOptionsSnapshot` (per-request reload), `IOptionsMonitor` (live reload), data annotations validation on options, `ValidateOnStart()`.
+
+---
+
+## 4. SOLID Principles
+
+**S — Single Responsibility:** Each class has ONE reason to change.
+- `BookService` handles business logic, not data access or HTTP concerns
+- `TokenService` only generates JWT tokens
+- `BookBuilder` only constructs and validates Books
+
+**O — Open/Closed:** Open for extension, closed for modification.
+- Adding a new sort strategy? Create a new class. Don't touch `BookService`.
+- Adding new filter rules? Create a new `Specification`. Don't touch existing ones.
+
+**L — Liskov Substitution:** Subtypes must be substitutable for base types.
+- `CachingBookRepository` can replace `BookRepository` anywhere `IBookRepository` is expected
+
+**I — Interface Segregation:** Don't force classes to depend on methods they don't use.
+- `IBookRepository` is separate from `IBookService`
+- Controllers depend on `IBookService`, not directly on `IBookRepository`
+
+**D — Dependency Inversion:** High-level modules depend on abstractions, not concretions.
+- `BookService` depends on `IBookRepository` (interface), not `BookRepository` (class)
+- Controllers depend on `IBookService`, not `BookService`
+- All dependencies injected via constructor (Dependency Injection)
+
+---
+
+## 5. API Design
+
+### REST Controllers
+
+**What REST means in practice:**
+- `GET /api/books` — retrieve list (safe, idempotent, no side effects)
+- `POST /api/books` — create a book (returns 201 Created + Location header)
+- `PUT /api/books/{id}` — replace a book fully (idempotent)
+- `DELETE /api/books/{id}` — remove a book (idempotent)
+
+**Controllers in this project:**
+- `AuthController` — `POST /api/auth/login` → returns JWT
+- `BooksController` — Full CRUD for books (V1)
+- `BooksV2Controller` — Same operations, enriched responses (V2)
+- `BooksCqrsController` — Same operations via MediatR
+- `RecommendationsController` — AI book suggestions
+
+**What to learn next:** HATEOAS (hypermedia links in responses), GraphQL as an alternative to REST, gRPC for service-to-service communication.
+
+---
+
+### JWT Authentication
+
+**What it is:** JSON Web Tokens — a compact, signed token that proves identity without server-side session state.
+
+**Why it exists:**
+- Stateless — the server doesn't store sessions, so it scales horizontally
+- Self-contained — the token carries claims (user ID, roles, expiry)
+- Signed — tamper-proof (HMAC-SHA256 signature)
+
+**How it works:**
+
+```
+Client: POST /api/auth/login { username, password }
+Server: validates credentials → generates JWT → returns token
+
+Client: GET /api/books  (Authorization: Bearer eyJ...)
+Server: validates token signature → extracts claims → allows/denies
+```
+
+**The token is three Base64-encoded parts separated by dots:**
+```
+eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiJ9.abc123
+[   Header          ] [    Payload         ] [Sig]
+```
+
+**In production, also use:**
+- HTTPS everywhere (tokens in transit must be encrypted)
+- Short expiry (15–60 minutes) + refresh tokens
+- ASP.NET Identity for user management
+- Token revocation list for logout
+
+**What to learn next:** OAuth 2.0, OpenID Connect, ASP.NET Identity, Refresh Tokens, PKCE flow.
+
+---
+
+### FluentValidation
+
+**What it is:** A validation library that lets you express validation rules as fluent code rather than data annotations.
+
+**Why it exists:**
+- Separation of concerns — validation rules live outside the model
+- Rich rule composition — `NotEmpty().MaximumLength(200).WithMessage("...")`
+- Automatic integration — invalid requests return 400 before hitting your controller
+
+**How it works here:**
+
+```csharp
 public class CreateBookValidator : AbstractValidator<CreateBookRequest>
 {
     public CreateBookValidator()
     {
         RuleFor(x => x.Title)
             .NotEmpty().WithMessage("Title is required.")
-            .MaximumLength(200).WithMessage("Title must not exceed 200 characters.");
+            .MaximumLength(200);
+
+        RuleFor(x => x.Author)
+            .NotEmpty().WithMessage("Author is required.");
 
         RuleFor(x => x.Year)
-            .InclusiveBetween(1000, DateTime.UtcNow.Year)
-            .WithMessage($"Year must be between 1000 and {DateTime.UtcNow.Year}.")
-            .When(x => x.Year.HasValue);  // ← Only validate if Year was provided
+            .InclusiveBetween(1, DateTime.Now.Year)
+            .When(x => x.Year.HasValue);
     }
 }
 ```
 
-**How it integrates:** `AddFluentValidationAutoValidation()` in Program.cs wires
-FluentValidation into the ASP.NET Core model validation pipeline.
-Invalid requests are automatically rejected with a `400 Bad Request` before
-the controller action method ever runs.
+When `POST /api/books` arrives with `{ "title": "", "author": "..." }`, FluentValidation fires, validation fails, and the response is:
 
-**The response when validation fails:**
 ```json
 {
+  "type": "https://tools.ietf.org/html/rfc7807",
+  "title": "One or more validation errors occurred.",
+  "status": 400,
   "errors": {
-    "Title": ["Title is required."],
-    "Year": ["Year must be between 1000 and 2026."]
+    "Title": ["Title is required."]
   }
 }
 ```
 
-**Why not DataAnnotations?** DataAnnotations (`[Required]`, `[MaxLength]`) work,
-but they put validation directly on the DTO class. For complex rules (conditional
-validation, cross-field validation), they become impossible to read. FluentValidation
-keeps DTOs clean and validation logic in one testable place.
+**What to learn next:** Custom validators, cross-property validation, async validators, using FluentValidation with Blazor.
 
 ---
 
-## Pagination
+### Rate Limiting
 
-**Files:** `DTOs/PaginatedResult.cs`, `DTOs/PagedBooksRequest.cs`
-**Endpoint:** `GET /api/books/paged?pageNumber=1&pageSize=10&search=tolkien&status=Read&sortBy=Year`
+**What it is:** Throttling — limiting how many requests a client can make in a time window.
 
-**Problem:** `GET /api/books` returns every book in the database. With 10 books
-this is fine. With 10,000 books you are sending megabytes of data the UI will
-never display. It is slow, wasteful, and will crash mobile clients.
+**Why it exists:**
+- Prevents abuse and DDoS attacks
+- Protects the auth endpoint from brute-force password guessing
+- Ensures fair resource sharing between clients
 
-**Solution:** Return one page at a time, with metadata telling the client how to
-navigate to other pages.
+**Two policies in this app:**
+- `"api"` — 100 requests per minute per IP (generous for normal use)
+- `"auth"` — 10 requests per minute per IP (strict for login)
 
-### The Request
-
+**How it works:**
 ```csharp
-public class PagedBooksRequest
+// Registration
+builder.Services.AddRateLimiter(options =>
 {
-    public int    PageNumber  { get; init; } = 1;
-    public int    PageSize    { get; init; } = 10;  // capped at 50
-    public string? SearchTerm { get; init; }
-    public string? Status     { get; init; }
-    public string? SortBy     { get; init; }
-}
+    options.AddFixedWindowLimiter("api", o =>
+    {
+        o.PermitLimit = 100;
+        o.Window = TimeSpan.FromMinutes(1);
+    });
+});
+
+// Per-endpoint attribute
+[EnableRateLimiting("api")]
+public class BooksController { ... }
 ```
 
-### The Response
+When rate limit is exceeded: `429 Too Many Requests` with `Retry-After: 60` header.
+
+**What to learn next:** Sliding window limiter, token bucket limiter, distributed rate limiting with Redis, `IPartitionedRateLimiter` for per-user limits.
+
+---
+
+### ProblemDetails (RFC 7807)
+
+**What it is:** A standard JSON error format for HTTP APIs. Instead of custom error shapes, all errors follow the same structure.
 
 ```json
 {
-  "items": [ /* the books for this page */ ],
-  "totalCount": 247,
-  "pageNumber": 3,
-  "pageSize": 10,
-  "totalPages": 25,
-  "hasNextPage": true,
-  "hasPreviousPage": true
+  "type": "https://tools.ietf.org/html/rfc7807",
+  "title": "Resource Not Found",
+  "status": 404,
+  "detail": "Book with ID 42 was not found.",
+  "instance": "/api/books/42",
+  "traceId": "00-abc123..."
 }
 ```
 
-### How It Works
+**Why it exists:**
+- Clients have ONE error-handling format to implement
+- Tooling (Swagger, API clients) understands standard fields
+- `traceId` links the error to server-side logs
 
-```csharp
-// BookService.GetPagedAsync():
-// 1. Run the existing SearchAsync (filters + sort) — reuse, don't duplicate
-var books = await SearchAsync(req.SearchTerm, parsedStatus, req.SortBy);
+**What to learn next:** Custom ProblemDetails types (e.g., `ValidationProblemDetails`), middleware-based ProblemDetails in ASP.NET Core 7+.
 
-// 2. Paginate in memory
-var items = books
-    .Skip((req.PageNumber - 1) * req.PageSize)   // e.g., page 3, size 10 = skip 20
-    .Take(req.PageSize)
-    .ToList();
+---
 
-// 3. Return with metadata
-return new PaginatedResult<Book>
+### API Versioning
+
+**What it is:** Maintaining multiple versions of an API simultaneously so old clients don't break when you add new features.
+
+**Why it exists:**
+- Real-world APIs have clients you don't control (mobile apps, third-party integrations)
+- You can't force all clients to update simultaneously
+- Versioning lets you add new fields, change behavior, or deprecate endpoints gradually
+
+**How it works here:**
+
+Three ways to specify the version:
+```
+URL segment:   GET /api/v2/books
+Header:        GET /api/books  +  X-API-Version: 2.0
+Query string:  GET /api/books?api-version=2.0
+```
+
+**V1 vs V2 response comparison:**
+```json
+// V1: /api/v1/books/1
+{ "id": 1, "title": "Dune", "author": "Herbert", "createdAt": "2024-01-15" }
+
+// V2: /api/v2/books/1 — same data + computed fields
 {
-    Items      = items,
-    TotalCount = books.Count,
-    PageNumber = req.PageNumber,
-    PageSize   = req.PageSize
-};
+  "id": 1, "title": "Dune", "author": "Herbert", "createdAt": "2024-01-15",
+  "daysInLibrary": 428,
+  "isRecentlyAdded": false,
+  "era": "Modern"
+}
 ```
 
-**TotalPages** is a computed property — never stored, always derived:
-```csharp
-public int TotalPages => (int)Math.Ceiling(TotalCount / (double)PageSize);
-```
+V2's computed fields (`DaysInLibrary`, `IsRecentlyAdded`, `Era`) are calculated on the fly from `CreatedAt` and `Year`. They're NOT stored in the database — they're added to `BookDtoV2` as computed properties.
+
+**What to learn next:** API deprecation strategies, sunset headers, semantic versioning, header-based content negotiation.
 
 ---
 
-## Caching — The Decorator Chain
+## 6. Data Layer
 
-**Files:** `Repositories/CachingBookRepository.cs`, `Repositories/LoggingBookRepository.cs`
+### Entity Framework Core + SQLite
 
-The full chain at runtime when `BookService` calls `GetAllAsync()`:
+**What EF Core is:** An Object-Relational Mapper (ORM) that lets you work with databases using C# objects instead of raw SQL.
 
-```
-BookService.GetAllBooksAsync()
-    ↓
-CachingBookRepository.GetAllAsync()
-    ├── Cache HIT  → return from IMemoryCache (no DB call)
-    └── Cache MISS → call inner...
-         ↓
-         LoggingBookRepository.GetAllAsync()
-             ├── Log "Getting all books..."
-             ├── call inner...
-             │    ↓
-             │    BookRepository.GetAllAsync()
-             │        ↓
-             │        EF Core → SQLite → books.db
-             │    ↑
-             ├── Log "Got 42 books in 12ms"
-             └── return books
-         ↑
-    ← store in cache for 60 seconds
-    ↑
-BookService gets the books
+**Why SQLite for development:**
+- Zero setup — no separate database server to install
+- File-based — the whole database is `books.db` in the project root
+- Good enough for apps with light concurrency
+- Easy to swap for PostgreSQL or SQL Server in production (just change the connection string and NuGet package)
+
+**The DbContext:**
+```csharp
+public class AppDbContext : DbContext
+{
+    public DbSet<Book> Books { get; set; }
+
+    protected override void OnModelCreating(ModelBuilder builder)
+    {
+        builder.Entity<Book>().HasKey(b => b.Id);
+        builder.Entity<Book>().Property(b => b.Title).IsRequired().HasMaxLength(200);
+        // etc.
+    }
+}
 ```
 
-**Cache-aside strategy:**
-- Read: check cache first. If present (HIT), return immediately. If not (MISS), fetch from DB, store in cache, return.
-- Write: always go to DB first, then **invalidate** the cache so the next read gets fresh data.
+**Migrations vs EnsureCreated:**
+This project uses `db.Database.EnsureCreated()` at startup — it creates the schema if it doesn't exist. This is fine for development. In production, you'd use migrations (`dotnet ef migrations add`, `dotnet ef database update`) for controlled schema evolution.
 
-**Why invalidate on write instead of update?**
-Updating a cached collection correctly is complex. Invalidating and letting the
-next read rebuild the cache is simpler and always correct.
+**What to learn next:** EF Core migrations, query optimization, compiled queries, `AsNoTracking()` for read-only queries, database sharding.
 
 ---
 
-## Health Checks
+### In-Memory Caching
 
-**Endpoints:** `GET /health` and `GET /health/detail`
+**What it is:** Storing frequently-read data in RAM to avoid database round-trips.
 
-**What is a health check?**
-An endpoint that tells infrastructure (load balancers, container orchestrators,
-monitoring dashboards) whether the application is alive and ready to serve traffic.
+**The pattern used:** Cache-Aside (also called Lazy Loading)
 
-**Why does it matter?**
-In production, Kubernetes and AWS ECS send HTTP requests to `/health` every few seconds.
-If the response is not 200 OK, they route traffic away from that instance and restart it.
-Without a health check, a broken app instance silently receives traffic and returns errors.
-
-### Basic health check — `/health`
-
-Returns `200 OK` with `Healthy` / `Degraded` / `Unhealthy` as plain text.
-
-```csharp
-builder.Services.AddHealthChecks()
-    .AddDbContextCheck<AppDbContext>("database");  // verifies DB is reachable
-
-app.MapHealthChecks("/health");
+```
+1. Check cache for "books"
+2. If FOUND (cache hit): return cached data immediately
+3. If NOT FOUND (cache miss): 
+   a. Query database
+   b. Store result in cache
+   c. Return data
 ```
 
-### Detailed health check — `/health/detail`
+**Cache invalidation on writes:**
+When a book is added, updated, or deleted, the `CachingBookRepository` clears the relevant cache entries. This ensures clients never see stale data for more than the cache duration.
 
-Returns JSON with full status, per-check results, and timing:
+**Configured TTL (Time To Live):**
+```json
+"Cache": {
+  "BooksCacheDurationSeconds": 60
+}
+```
 
+**What to learn next:** Distributed caching with Redis (`IDistributedCache`), cache eviction policies, sliding expiration, cache stampede prevention.
+
+---
+
+## 7. Observability
+
+### Serilog Structured Logging
+
+**What it is:** Structured logging means log events are structured data (key-value pairs), not just text strings.
+
+**Why structured logging matters:**
+```
+// Traditional string log (hard to query):
+"INFO: User admin fetched 42 books in 123ms"
+
+// Structured log (machine-readable, filterable):
+{ "Level": "Info", "Action": "GetBooks", "User": "admin", "Count": 42, "ElapsedMs": 123 }
+```
+
+With structured logs, you can query: "Show me all requests that fetched more than 100 books" or "Show me all requests slower than 500ms" — impossible with plain text logs.
+
+**How Serilog is configured here:**
+
+```csharp
+Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)  // Quiet Microsoft internals
+    .Enrich.FromLogContext()       // Add request context
+    .Enrich.WithMachineName()      // Which server logged this
+    .Enrich.WithEnvironmentName()  // dev/staging/prod
+    .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}")
+    .WriteTo.File("logs/booklibrary-.log", rollingInterval: RollingInterval.Day)
+    .CreateLogger();
+```
+
+**Log sinks:** Where logs are sent
+- **Console** — visible during development, ingested by Docker/Kubernetes logging drivers
+- **File** — `logs/booklibrary-2024-01-15.log` with 7-day retention
+
+**In production, you'd add:**
+```csharp
+.WriteTo.Seq("http://localhost:5341")     // Seq - local dev search
+.WriteTo.Elasticsearch(...)               // Elasticsearch + Kibana
+.WriteTo.ApplicationInsights(...)         // Azure Monitor
+.WriteTo.DatadogLogs(...)                 // Datadog
+```
+
+**Request logging middleware:**
+```
+POST /api/auth/login responded 200 in 45.2ms
+GET /api/books responded 200 in 8.7ms
+```
+
+**What to learn next:** Seq (local structured log explorer), ELK Stack (Elasticsearch + Logstash + Kibana), log correlation IDs, structured logging best practices.
+
+---
+
+### Health Checks
+
+**What they are:** Endpoints that report whether your app and its dependencies are healthy.
+
+**Why they exist:**
+- Load balancers use them to route traffic away from unhealthy instances
+- Kubernetes uses them for readiness and liveness probes
+- Monitoring dashboards use them for alerts
+- Docker healthcheck commands use them
+
+**Two endpoints:**
+```
+GET /health          → Simple: "Healthy" or "Unhealthy" (used by load balancers)
+GET /health/detail   → JSON: which checks passed/failed and why
+```
+
+**Current checks:**
+- `database` — `EF Core` pings SQLite to confirm it's reachable
+
+**Example /health/detail response:**
 ```json
 {
   "status": "Healthy",
   "checks": [
-    {
-      "name": "database",
-      "status": "Healthy",
-      "duration": "4.2ms",
-      "description": null
-    }
+    { "name": "database", "status": "Healthy", "duration": "2.3ms" }
   ],
-  "totalDuration": "4.8ms"
+  "totalDuration": "3.1ms"
 }
 ```
 
-This is what a monitoring dashboard (Grafana, Datadog, etc.) would consume.
+**What to learn next:** Custom health checks, adding checks for Redis/message queues/external APIs, health check UI (AspNetCore.HealthChecks.UI), Kubernetes probes.
 
 ---
 
-## Global Exception Handling & ProblemDetails
+### OpenTelemetry (Traces + Metrics)
 
-**File:** `Middleware/GlobalExceptionMiddleware.cs`
+**What it is:** An open-source observability framework that captures distributed traces and metrics. It's the industry standard for instrumenting cloud-native applications.
 
-**Problem:** Unhandled exceptions leak stack traces to clients in development
-and return ugly, inconsistent error responses in production.
-
-```json
-// Without global exception handling — terrible:
-System.NullReferenceException: Object reference not set to an instance of an object.
-   at BookLibrary.Services.BookService.GetBookByIdAsync(Int32 id) in ...
+**The 3 pillars of observability:**
+```
+Logs    = WHAT happened ("Error connecting to database at 14:32")
+Metrics = HOW MUCH/OFTEN (200 requests/min, 99th percentile latency 450ms)
+Traces  = THE JOURNEY of one request (which functions were called, in what order, how long each took)
 ```
 
-**Solution:** One middleware wraps the entire pipeline. Any unhandled exception
-is caught here and converted to a structured RFC 7807 ProblemDetails response.
+**Serilog handles Logs. OpenTelemetry handles Metrics and Traces.**
 
-### RFC 7807 — What Is It?
+**Traces explained:**
+A trace is like a call stack across time. Each step is a "span":
+```
+Trace: GET /api/books (450ms total)
+  ├── Middleware pipeline (5ms)
+  ├── BooksController.GetAll (440ms)
+  │     ├── CachingBookRepository.GetAllAsync (3ms) — cache miss
+  │     │     ├── LoggingBookRepository.GetAllAsync (430ms)
+  │     │     │     └── BookRepository.GetAllAsync — SQL query (425ms)
+  └── Serialize response (5ms)
+```
 
-RFC 7807 is an internet standard for HTTP error responses. Instead of every
-API inventing its own error format, everyone uses the same structure:
+**Metrics explained:**
+Counters, gauges, and histograms:
+- Requests per second
+- Response time percentiles (P50, P95, P99)
+- Active connections
+- Cache hit rate
 
-```json
-{
-  "status": 404,
-  "title": "Resource Not Found",
-  "detail": "No book with ID 99 was found.",
-  "instance": "/api/books/99",
-  "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+**In this project:**
+```csharp
+builder.Services.AddOpenTelemetry()
+    .WithTracing(tracing => tracing
+        .AddAspNetCoreInstrumentation()  // Auto-traces every HTTP request
+        .AddHttpClientInstrumentation()  // Traces outbound HTTP calls
+        .AddConsoleExporter())           // Dev: print to console
+    .WithMetrics(metrics => metrics
+        .AddAspNetCoreInstrumentation()
+        .AddConsoleExporter());
+```
+
+**Custom spans with `BookLibraryTelemetry`:**
+```csharp
+using var activity = BookLibraryTelemetry.StartBookOperation("GetBookById", bookId: id);
+// Your code runs here
+// The activity is automatically closed when disposed
+```
+
+**In production, swap ConsoleExporter for:**
+- **OTLP → Jaeger** (open-source trace visualization)
+- **OTLP → Zipkin** (another open-source option)
+- **OTLP → Datadog / New Relic / Honeycomb** (commercial APM)
+- **Azure Application Insights** (Azure-native)
+
+**What to learn next:** Jaeger, Prometheus + Grafana, OpenTelemetry Collector, distributed tracing in microservices.
+
+---
+
+## 8. Resilience
+
+### Polly Resilience Pipeline
+
+**What it is:** A library for handling transient failures in distributed systems.
+
+**Why it exists:**
+Network calls fail. External APIs have downtime, rate limits, and flaky behavior. Without resilience patterns, one bad network call crashes your entire request. Polly adds automatic recovery strategies.
+
+**Three strategies used here (in `BookRecommendationService`):**
+
+#### Retry with Exponential Backoff
+```
+Attempt 1 → fails → wait 2s
+Attempt 2 → fails → wait 4s
+Attempt 3 → fails → wait 8s
+Attempt 4 → fail → give up, throw exception
+```
+
+Why exponential backoff? If the API is overloaded, hammering it every 100ms makes it worse. Waiting longer gives the service time to recover.
+
+#### Circuit Breaker
+```
+CLOSED state: requests flow normally
+  → If 50%+ fail in 30s window (min 3 requests):
+OPEN state: all requests fail immediately (no network call) for 30s
+  → After 30s break:
+HALF-OPEN state: try one request
+  → If succeeds → back to CLOSED
+  → If fails → back to OPEN
+```
+
+Why circuit breaker? Without it, every request to a failing service waits for a timeout (15s here), consuming threads and degrading performance. With circuit breaker, requests fail fast when the service is known to be down.
+
+#### Timeout
+Each individual attempt has a 15-second budget. Without this, a hung HTTP call would hold a thread indefinitely.
+
+**Combined pipeline (in order of execution):**
+```csharp
+ResiliencePipelineBuilder()
+    .AddRetry(...)          // Outer: retry with backoff
+    .AddCircuitBreaker(...) // Middle: stop retrying if circuit is open
+    .AddTimeout(...)        // Inner: each attempt has max 15s
+```
+
+**What to learn next:** Bulkhead isolation, hedging (parallel requests, take first success), Polly with `IHttpClientFactory`, chaos engineering.
+
+---
+
+### Response Compression
+
+**What it is:** Compressing HTTP response bodies before sending to the client, reducing bandwidth and improving load times.
+
+**Compression algorithms:**
+- **Brotli** — newer, 15-25% better compression than Gzip, supported by all modern browsers
+- **Gzip** — universal support, good compression
+
+The client tells the server what it supports via the `Accept-Encoding: br, gzip` header. The server picks the best option.
+
+**When to use it:**
+- JSON APIs with large responses (book lists, recommendation results)
+- Static text files (JavaScript, CSS)
+- NOT for already-compressed content (images, videos)
+
+**What to learn next:** HTTP/2 Server Push, CDN caching, content delivery optimization.
+
+---
+
+## 9. CQRS + MediatR
+
+**CQRS = Command Query Responsibility Segregation**
+
+**What it is:** Separating read operations (Queries) from write operations (Commands). Each operation is represented as an object and handled by a dedicated handler class.
+
+**Why it exists:**
+- Each handler has ONE responsibility (Single Responsibility Principle at the use-case level)
+- Controllers are decoupled from business logic
+- Easy to add cross-cutting behavior (logging, validation, caching) as pipeline behaviors
+- Scales independently — read and write sides can use different databases
+
+**The MediatR pattern:**
+```
+Controller → sends Request object → MediatR (message bus) → finds Handler → executes → returns response
+```
+
+Compare to traditional approach:
+```csharp
+// Traditional: Controller knows about service
+public class BooksController : ControllerBase {
+    private readonly IBookService _bookService; // tight coupling
+    public async Task<IActionResult> GetAll()
+        => Ok(await _bookService.GetAllBooksAsync());
+}
+
+// CQRS: Controller knows nothing about implementation
+public class BooksCqrsController : ControllerBase {
+    private readonly IMediator _mediator; // loose coupling
+    public async Task<IActionResult> GetAll()
+        => Ok(await _mediator.Send(new GetAllBooksQuery()));
 }
 ```
 
-**`traceId`** is critical for debugging in production — you give it to the developer
-and they can find the exact log entry for that request.
+**Request types:**
+- **Query** — reads data, has no side effects
+  - `GetAllBooksQuery → IReadOnlyList<BookDto>`
+  - `GetBookByIdQuery(int id) → BookDto?`
+  - `SearchBooksQuery(string term, ReadingStatus?) → IReadOnlyList<BookDto>`
+- **Command** — changes state, returns result
+  - `CreateBookCommand(Title, Author, ...) → BookDto`
+  - `DeleteBookCommand(int id) → bool`
 
-### How the middleware works
-
+**Each handler is a single class:**
 ```csharp
-public async Task InvokeAsync(HttpContext context)
+public class GetAllBooksQueryHandler : IRequestHandler<GetAllBooksQuery, IReadOnlyList<BookDto>>
 {
-    try
+    private readonly IBookService _bookService;
+    // Constructor injection...
+
+    public async Task<IReadOnlyList<BookDto>> Handle(GetAllBooksQuery request, CancellationToken ct)
     {
-        await _next(context);  // run the rest of the pipeline
-    }
-    catch (Exception ex)
-    {
-        // Map exception types to HTTP status codes:
-        // KeyNotFoundException   → 404 Not Found
-        // ArgumentException      → 400 Bad Request
-        // UnauthorizedAccess     → 401 Unauthorized
-        // Everything else        → 500 Internal Server Error
-        await WriteProblemDetailsAsync(context, ex);
-    }
-}
-```
-
-**Registered first in the pipeline** so it catches exceptions from every
-other middleware and every controller action.
-
----
-
-## Rate Limiting
-
-**Built-in ASP.NET Core 7+ feature — no external library needed.**
-
-**What is rate limiting?**
-Restricting how many requests a client can make in a given time window.
-
-**Why does it matter?**
-- Prevents brute-force attacks on the login endpoint (try 10,000 passwords per second)
-- Protects the API from accidental or malicious overload
-- Ensures fair resource sharing between multiple clients
-
-### Configuration
-
-```csharp
-builder.Services.AddRateLimiter(options =>
-{
-    // General API: 100 requests per minute per IP
-    options.AddFixedWindowLimiter("api", o =>
-    {
-        o.PermitLimit = 100;
-        o.Window      = TimeSpan.FromMinutes(1);
-    });
-
-    // Auth endpoint: 10 requests per minute per IP (stricter — brute-force protection)
-    options.AddFixedWindowLimiter("auth", o =>
-    {
-        o.PermitLimit = 10;
-        o.Window      = TimeSpan.FromMinutes(1);
-    });
-});
-```
-
-### Applied per-controller
-
-```csharp
-[EnableRateLimiting("api")]
-public class BooksController : ControllerBase { ... }
-
-[EnableRateLimiting("auth")]
-public class AuthController : ControllerBase { ... }
-```
-
-### When the limit is exceeded
-
-The client receives `429 Too Many Requests` with a `Retry-After: 60` header
-and a structured JSON body explaining how long to wait.
-
-### Fixed Window vs Sliding Window
-
-**Fixed window:** The window resets at a fixed interval. Simple, predictable.
-  Weakness: a client can burst at the boundary (100 at 00:59, 100 at 01:01).
-
-**Sliding window:** The window slides with each request. Smoother, fairer.
-  This project uses Fixed Window for simplicity; Sliding Window is available
-  via `AddSlidingWindowLimiter()`.
-
----
-
-## AI Book Recommendations
-
-**Files:** `Services/BookRecommendationService.cs`, `Interfaces/IBookRecommendationService.cs`,
-`Controllers/RecommendationsController.cs`, `Pages/Recommendations.razor`
-
-**What does it do?**
-Takes the user's read and currently-reading books, sends them to the Anthropic
-Claude API, and gets back personalised book recommendations in JSON format.
-
-### The Flow
-
-```
-User clicks "Get AI Recommendations"
-    ↓
-Recommendations.razor calls IBookRecommendationService.GetRecommendationsAsync()
-    ↓
-BookRecommendationService:
-    1. Checks if API key is configured → if not, returns helpful message
-    2. Gets the user's read/reading books
-    3. Builds a prompt describing their reading history
-    4. Sends prompt to Claude claude-3-5-haiku-20241022
-    5. Parses the JSON response
-    6. Returns BookRecommendationResult
-    ↓
-UI displays recommendation cards (title, author, genre, year, reason)
-```
-
-### The Prompt
-
-The service sends Claude a structured prompt asking for JSON output:
-
-```
-You are a knowledgeable book recommendation engine.
-Based on the user's reading history below, suggest 5 books they would enjoy.
-
-USER'S READING HISTORY:
-- "Clean Code" by Robert C. Martin (Programming) [2008] — Read
-- "The Pragmatic Programmer" by David Thomas (Programming) [1999] — Read
-...
-
-Respond ONLY with valid JSON in this format:
-{ "reasoning": "...", "recommendations": [{ "title": "...", ... }] }
-```
-
-### Graceful Degradation
-
-The service handles every failure case without crashing:
-- **No API key configured** → returns a message explaining how to add one
-- **No books in reading history** → returns a message asking to add books first
-- **API call fails** → logs the error, returns a friendly message
-- **Response not valid JSON** → caught and logged
-
-This is the correct pattern for any optional external dependency.
-
-### Configuration
-
-In `appsettings.json`:
-```json
-"Anthropic": {
-  "ApiKey": "",
-  "Model": "claude-3-5-haiku-20241022"
-}
-```
-
-Set `ApiKey` to your Anthropic API key. Never commit real API keys to git.
-Use environment variables in production: `Anthropic__ApiKey=sk-ant-...`
-
-### Why an Interface?
-
-`IBookRecommendationService` exists so:
-- Unit tests can mock it — no real API calls in tests
-- You can swap Claude for another AI provider by creating a different implementation
-  and changing one line in Program.cs
-- The Blazor page and the controller both depend on the abstraction, not the concrete class
-
----
-
-## Options Pattern
-
-**Problem:** Reading raw config strings like `_configuration["Jwt:Key"]` is fragile
-(typo = silent null), not type-safe, not testable, and scattered everywhere.
-
-**Solution:** Each feature has a dedicated strongly-typed class bound from `appsettings.json`.
-
-```csharp
-// Options class:
-public class JwtOptions
-{
-    public const string SectionName = "Jwt";
-    public string Key           { get; init; } = string.Empty;
-    public string Issuer        { get; init; } = string.Empty;
-    public string Audience      { get; init; } = string.Empty;
-    public int    ExpiryMinutes { get; init; } = 60;
-}
-
-// Registration in Program.cs:
-builder.Services.Configure<JwtOptions>(
-    builder.Configuration.GetSection(JwtOptions.SectionName));
-
-// Consumption in any service:
-public TokenService(IOptions<JwtOptions> options)
-{
-    _options = options.Value;  // fully typed, null-safe
-}
-```
-
-| Class | Config Section | Used By |
-|-------|---------------|---------|
-| `JwtOptions` | `"Jwt"` | `TokenService`, JWT middleware |
-| `CacheOptions` | `"Cache"` | `CachingBookRepository` |
-| `LibraryStatsOptions` | `"LibraryStats"` | `LibraryStatsBackgroundService` |
-| `AnthropicOptions` | `"Anthropic"` | `BookRecommendationService` |
-
----
-
-## Middleware
-
-Middleware is code that runs in the HTTP request pipeline — between the server
-receiving a request and the controller handling it. Every request passes through
-every registered middleware in order.
-
-### RequestTimingMiddleware
-
-**File:** `Middleware/RequestTimingMiddleware.cs`
-
-Measures and logs elapsed milliseconds for every HTTP request.
-
-```
-Incoming Request
-    ↓
-[GlobalExceptionMiddleware]   ← outermost (catches everything)
-    ↓
-[RequestTimingMiddleware]     ← starts timer
-    ↓
-[Authentication]
-    ↓
-[Authorization]
-    ↓
-[Controller / Blazor]         ← actual work happens here
-    ↑
-[RequestTimingMiddleware]     ← stops timer, logs "GET /api/books → 200 in 14ms"
-    ↑
-[GlobalExceptionMiddleware]   ← no exception → passes response through
-    ↑
-Response sent to client
-```
-
-Blazor SignalR connections (`/_blazor`) are skipped — they are long-lived WebSocket
-connections and logging timing on them would generate thousands of meaningless log entries.
-
-### GlobalExceptionMiddleware
-
-Wraps the entire pipeline. Catches any unhandled exception and converts it to
-a ProblemDetails response. See [Global Exception Handling](#global-exception-handling--problemdetails).
-
-### Extension Method Pattern
-
-Both middleware classes are registered via extension methods:
-
-```csharp
-// Instead of:
-app.UseMiddleware<RequestTimingMiddleware>();
-
-// You write:
-app.UseRequestTiming();
-```
-
-This is the conventional ASP.NET Core pattern. It is cleaner to read and
-hides the implementation detail of which class backs the extension.
-
----
-
-## Background Service
-
-**File:** `BackgroundServices/LibraryStatsBackgroundService.cs`
-
-A background task that runs for the lifetime of the application, logging
-library statistics (total books, by status) on a configurable interval.
-
-```csharp
-protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-{
-    while (!stoppingToken.IsCancellationRequested)
-    {
-        await Task.Delay(TimeSpan.FromSeconds(_options.IntervalSeconds), stoppingToken);
-        await LogStatsAsync(stoppingToken);
+        var books = await _bookService.GetAllBooksAsync();
+        return books.Select(ToDto).ToList().AsReadOnly();
     }
 }
 ```
 
-### The Scoped-in-Singleton Problem
+**Both `/api/books` and `/api/books-cqrs` exist side by side** — this lets you compare the two approaches directly.
 
-This is one of the most important concepts in this codebase.
-
-`AddHostedService<T>` registers the service as a **Singleton** — it lives for
-the entire application lifetime. `IBookService` is **Scoped** — it should live
-only for the duration of one request.
-
-If you inject `IBookService` directly into the background service constructor,
-the Scoped service gets captured in the Singleton. The same `DbContext` is
-shared across all future work — leading to data staleness and memory leaks.
-
-**The fix: `IServiceScopeFactory`**
-
-```csharp
-// Constructor — inject the factory (Singleton-safe), not the service (Scoped):
-public LibraryStatsBackgroundService(IServiceScopeFactory scopeFactory, ...)
-
-// Per tick — create a fresh scope, resolve the service, let it dispose:
-await using var scope = _scopeFactory.CreateAsyncScope();
-var bookService = scope.ServiceProvider.GetRequiredService<IBookService>();
-await bookService.GetAllBooksAsync();
-// scope is disposed here — DbContext is cleaned up correctly
-```
-
-This pattern applies to any background work that needs database access.
+**What to learn next:** MediatR pipeline behaviors (like middleware for handlers), Event Sourcing, CQRS with separate read/write databases, Vertical Slice Architecture.
 
 ---
 
-## UI Layer — Blazor
+## 10. AI Integration
 
-Blazor Server is a framework where UI components run on the server and
-communicate with the browser over a WebSocket connection (SignalR).
-The browser renders HTML; C# handles the logic.
+**What it does:** Given the user's reading history, asks Claude to recommend 5 books they'd enjoy, returning structured JSON.
 
-### Component Architecture
+**How it works:**
 
-Each component has a single responsibility — the same SOLID principles applied to the UI.
-
-| Component | Responsibility |
-|-----------|---------------|
-| `MainLayout.razor` | App shell — sidebar + main content slot. No business logic. |
-| `NavMenu.razor` | Navigation links + theme toggle. Handles JS interop for theme. |
-| `Index.razor` | Dashboard — stats, currently reading, recently added. |
-| `Books.razor` | Book list with search, filter, sort, delete with confirm dialog. |
-| `BookForm.razor` | Add/edit form. Uses `IBookFactory` + `IBookService`. |
-| `Recommendations.razor` | AI recommendations page. Calls `IBookRecommendationService`. |
-| `Toast.razor` | Dumb (presentational) component — receives props, renders, nothing else. |
-| `ConfirmDialog.razor` | Modal dialog — raises `OnConfirm` / `OnCancel` EventCallbacks. |
-
-### Component Communication
-
-**Parent → Child (Parameters):**
-```razor
-<Toast IsVisible="@showToast" Message="@toastMessage" Type="success" />
+```
+1. Collect user's books (read + currently reading)
+2. Format as a text list
+3. Send to Anthropic Claude API with a structured prompt
+4. Parse the JSON response
+5. Return BookRecommendationResult to the UI
 ```
 
-**Child → Parent (EventCallback):**
+**Prompt engineering:**
+The prompt explicitly tells Claude:
+- Respond ONLY in JSON (no markdown wrappers)
+- Use a specific schema `{ reasoning, recommendations: [...] }`
+- Don't recommend books already in the user's list
+
+**Fallback handling:**
+- No API key configured → returns helpful message, not an error
+- Empty reading list → asks user to add books first
+- API fails → Polly retries 3 times, then returns graceful error message
+
+**Why structured output matters:**
+JSON responses from LLMs need explicit instructions and post-processing (stripping markdown code fences) because models sometimes ignore "respond in JSON only." Always validate and sanitize LLM output.
+
+**What to learn next:** Semantic Kernel (Microsoft's AI SDK), LangChain for .NET, function calling / tool use in LLMs, RAG (Retrieval-Augmented Generation), vector databases.
+
+---
+
+## 11. Background Services
+
+**What it is:** A long-running task that runs alongside your web application.
+
+**`LibraryStatsBackgroundService`:**
+- Runs every N seconds (configured in `appsettings.json: LibraryStats:IntervalSeconds`)
+- Queries the database for book counts by status
+- Logs the statistics
+
 ```csharp
-// ConfirmDialog declares what events it raises:
-[Parameter] public EventCallback OnConfirm { get; set; }
-[Parameter] public EventCallback OnCancel  { get; set; }
-
-// The parent decides what happens:
-<ConfirmDialog OnConfirm="DeleteConfirmed" OnCancel="CancelDelete" />
-```
-
-The dialog does not know what "confirm" does — the parent decides. This is
-Dependency Inversion applied to the UI layer.
-
-### Dark / Light Theme
-
-1. `_Host.cshtml` runs an inline script before the page renders, reading
-   `localStorage` and setting `data-theme` on `<html>`. This prevents a flash.
-2. `site.css` defines a `[data-theme="light"]` block overriding every color variable.
-3. `NavMenu.razor` toggles the attribute via `IJSRuntime` and persists the preference.
-
-**JS Interop rule:** Browser APIs are only available after Blazor hydrates.
-Always use `OnAfterRenderAsync` with a `firstRender` guard — never `OnInitializedAsync`.
-
-```csharp
-protected override async Task OnAfterRenderAsync(bool firstRender)
+public class LibraryStatsBackgroundService : BackgroundService
 {
-    if (firstRender)
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var saved = await JS.InvokeAsync<string>("themeInterop.getTheme");
-        isDarkTheme = saved != "light";
-        StateHasChanged();
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            // Log stats
+            await Task.Delay(_options.IntervalSeconds * 1000, stoppingToken);
+        }
     }
 }
 ```
 
-### CSS Design System
+**Why BackgroundService instead of a cron job?**
+- Lives in the same process as your app — shares DI container
+- Responds to app shutdown gracefully (CancellationToken)
+- No external scheduler dependency
 
-All visual tokens are CSS custom properties in `site.css`:
-
-```css
-:root {
-    --bg-base:    #0D0D14;    /* page background */
-    --accent:     #7C3AED;    /* primary purple  */
-    --text:       #F1F0FF;    /* primary text    */
-}
-[data-theme="light"] {
-    --bg-base:    #F4F4F8;    /* just override the tokens */
-    --text:       #1A1A2E;
-}
-```
-
-No component hard-codes a color. Every component uses variables. Changing the
-entire visual theme means changing one CSS block, not touching any component.
+**What to learn next:** Hangfire (robust job scheduling with retries and UI), Quartz.NET, Azure Durable Functions, outbox pattern for reliable event processing.
 
 ---
 
-## Unit Testing
+## 12. Testing
 
-**42 tests — xUnit + Moq.**
+### Unit Tests
 
-Tests verify behaviour, not implementation. A test should not care which
-concrete class runs — it cares that the result is correct.
+**What they are:** Tests that verify ONE class in isolation, with all dependencies replaced by mocks.
 
+**Why they matter:**
+- Fast (milliseconds per test)
+- Pinpoint failures to a specific class
+- Run on every commit with zero infrastructure
+
+**Tools used:**
+- **xUnit** — test framework (attributes: `[Fact]`, `[Theory]`)
+- **Moq** — mocking library (`Mock<IBookRepository>`, `.Setup(...)`, `.Verify(...)`)
+
+**Example:**
 ```csharp
-// Arrange: replace IBookRepository with a Moq fake
-var repoMock = new Mock<IBookRepository>();
-repoMock.Setup(r => r.GetAllAsync()).ReturnsAsync(new List<Book> { book1, book2 });
+[Fact]
+public async Task GetAllBooksAsync_ReturnsBooks()
+{
+    // Arrange
+    var mockRepo = new Mock<IBookRepository>();
+    mockRepo.Setup(r => r.GetAllAsync())
+            .ReturnsAsync(new List<Book> { new Book { Title = "Dune" } });
 
-// Act: call the real BookService
-var service = new BookService(repoMock.Object, strategies);
-var result  = await service.GetAllBooksAsync();
+    var service = new BookService(mockRepo.Object, ...);
 
-// Assert: check the result
-Assert.Equal(2, result.Count);
+    // Act
+    var result = await service.GetAllBooksAsync();
 
-// Verify: confirm the mock was called correctly
-repoMock.Verify(r => r.GetAllAsync(), Times.Once);
+    // Assert
+    Assert.Single(result);
+    Assert.Equal("Dune", result.First().Title);
+    mockRepo.Verify(r => r.GetAllAsync(), Times.Once);
+}
 ```
 
-**Why mock `IBookRepository` and not `BookRepository`?**
-`BookService` depends on `IBookRepository` (the interface). Mocking the interface
-means the test never touches EF Core, SQLite, or any infrastructure. Tests are fast,
-isolated, and reliable. This only works because of Dependency Inversion.
+**47 unit tests cover:** BookBuilder, BookService, Specifications, Sort Strategies, Caching Decorator.
 
-**Testing the Caching Decorator:**
-`IMemoryCache` is complex to mock. A real `MemoryCache` is used instead —
-this is an example of preferring real collaborators when mocking is harder than
-just using the real thing.
+---
 
-**Run tests:**
+### Integration Tests
+
+**What they are:** Tests that spin up the REAL application and make actual HTTP requests through the pipeline.
+
+**Why they matter:**
+- Test the whole stack: routing, auth, validation, middleware, database
+- Catch integration bugs that unit tests miss
+- Verify your API contract from the client's perspective
+
+**What's different from unit tests:**
+| Unit Test | Integration Test |
+|-----------|-----------------|
+| Tests ONE class | Tests the WHOLE app |
+| Mocks dependencies | Uses real dependencies (or in-memory subs) |
+| Milliseconds | Seconds |
+| Finds logic bugs | Finds wiring, routing, auth bugs |
+
+**`TestWebApplicationFactory`:**
+```csharp
+// Replaces real SQLite with in-memory database
+services.AddDbContext<AppDbContext>(options =>
+    options.UseInMemoryDatabase("TestDb_" + Guid.NewGuid()));
+```
+
+Each test run gets a UNIQUE in-memory database name (`Guid.NewGuid()`) — no data leaks between tests.
+
+**9 integration tests cover:**
+- Login with valid/invalid credentials
+- `GET /api/books` with and without auth
+- `POST /api/books` with valid/invalid data
+- `GET /health`
+- `GET /api/books/paged`
+- `GET /api/books-cqrs`
+
+**What to learn next:** Contract testing with PactNet, mutation testing with Stryker, performance testing with NBomber or k6.
+
+---
+
+## 13. Infrastructure
+
+### Docker + docker-compose
+
+**What Docker is:** Packages your app and all its dependencies into a portable container that runs identically everywhere.
+
+**Why containers:**
+- "Works on my machine" problem solved — the container IS the machine
+- Consistent environments: dev → CI → staging → production
+- Easy scaling and deployment
+
+**Multi-stage Dockerfile:**
+```dockerfile
+# Stage 1: Build (has full SDK, large image)
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+RUN dotnet restore && dotnet build ...
+
+# Stage 2: Publish (built app, no SDK)
+FROM build AS publish
+RUN dotnet publish -o /app/publish
+
+# Stage 3: Runtime (tiny image — no SDK, no build tools)
+FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
+# Copy only the published files
+COPY --from=publish /app/publish .
+```
+
+Multi-stage builds keep the final image small (runtime image is ~200MB vs SDK image ~700MB). The build tools never end up in production.
+
+**Security:** Runs as non-root user (`appuser`) — a container best practice.
+
+**docker-compose.yml:**
+```yaml
+services:
+  booklibrary:
+    build: .
+    ports: ["8080:8080"]
+    volumes:
+      - booklibrary_data:/app/books.db  # persist SQLite across container restarts
+    healthcheck:
+      test: curl -f http://localhost:8080/health
+```
+
+**Named volumes** persist SQLite data when you `docker compose down` and `docker compose up`.
+
+**What to learn next:** Docker networking, multi-container apps, container registries (Docker Hub, ECR, ACR), image scanning with Trivy.
+
+---
+
+### GitHub Actions CI/CD
+
+**What it is:** Automated pipelines that run on every push to GitHub.
+
+**Why it exists:**
+- Catch broken builds before they reach production
+- Run tests automatically — no "I forgot to run tests before pushing"
+- Deploy automatically when tests pass (Continuous Deployment)
+
+**CI pipeline (`.github/workflows/ci.yml`) — what it does:**
+1. Trigger: push to `main` or any pull request
+2. Checkout code
+3. Setup .NET 8
+4. `dotnet restore` — download NuGet packages
+5. `dotnet build` — compile
+6. `dotnet test` — run all tests
+7. Deploy to Railway (if on `main`)
+
+**The CI badge in README shows the status of the latest run.**
+
+**What to learn next:** GitHub Actions matrix builds, artifact uploads, Docker builds in CI, OIDC-based deployments (no secrets), GitHub Environments for approvals.
+
+---
+
+### Railway Deployment
+
+**What it is:** A PaaS (Platform-as-a-Service) similar to Heroku — deploy from Git, Railway handles the infrastructure.
+
+**Why Railway over raw VMs:**
+- No server management — Railway handles OS updates, networking, TLS
+- Deploy with `git push` — no SSH, no Ansible
+- Free tier available for hobby projects
+
+**How deployment works:**
+1. Railway connects to the GitHub repo
+2. On push to `main`, Railway pulls the code
+3. Detects .NET project (via `.csproj`) and builds it
+4. Deploys the compiled app with `dotnet BookLibrary.dll`
+5. Automatically provisions a TLS certificate
+
+**Environment variables on Railway:**
+- `Jwt__Key` — JWT signing secret
+- `Anthropic__ApiKey` — AI recommendations key
+- `ASPNETCORE_ENVIRONMENT=Production` — enables HSTS, disables Swagger UI
+
+**What to learn next:** AWS ECS, Azure App Service, Google Cloud Run, Kubernetes, Terraform for infrastructure-as-code.
+
+---
+
+## 14. .NET Aspire (Coming Soon)
+
+**.NET Aspire** is Microsoft's opinionated stack for building and running cloud-ready distributed applications locally.
+
+**What it provides:**
+- **Dashboard** — A local UI showing all your services, logs, metrics, and distributed traces side-by-side
+- **Service Discovery** — Services find each other by name, not hardcoded URLs
+- **Health Monitoring** — All services monitored from one place
+- **Environment Variable Injection** — Configuration flows between services automatically
+- **One-command startup** — `dotnet run` in the AppHost starts ALL services
+
+**Think of it as:** Local Kubernetes, but simpler and .NET-first.
+
+**To try Aspire:**
 ```bash
-dotnet test
+dotnet workload install aspire
 ```
 
----
-
-## Middleware Pipeline Order — Why It Matters
-
-This is where many developers make mistakes. Order is everything.
-
+Then the `BookLibrary.AppHost` project would orchestrate everything:
 ```csharp
-// Program.cs — the order these lines appear = the order they run:
-
-app.UseGlobalExceptionHandler();  // 1st — catches exceptions from everything below
-
-app.UseSwagger();                 // Dev only
-app.UseHttpsRedirection();
-app.UseStaticFiles();
-app.UseRouting();                 // Must come before rate limiter and auth
-
-app.UseRateLimiter();             // After routing (needs route info), before auth
-
-app.UseAuthentication();          // Establishes WHO the user is (reads JWT)
-app.UseAuthorization();           // Decides WHAT they can do ([Authorize] checks)
-
-app.UseRequestTiming();           // Custom timing middleware
-
-app.MapHealthChecks("/health");
-app.MapControllers();             // Must come BEFORE MapFallbackToPage
-app.MapBlazorHub();
-app.MapFallbackToPage("/_Host"); // Catches everything not matched above
+var builder = DistributedApplication.CreateBuilder(args);
+builder.AddProject<Projects.BookLibrary>("booklibrary");
+builder.Build().Run();
+// Dashboard opens at https://localhost:15888
 ```
 
-**Why `UseAuthentication` before `UseAuthorization`?**
-Authentication establishes identity. Authorization evaluates permissions.
-You cannot check permissions before you know who the user is.
-
-**Why `MapControllers` before `MapFallbackToPage`?**
-The fallback route (`/_Host`) matches *everything*. If controllers are registered
-after, their routes will never be reached — the fallback wins every time.
-
-**Why `UseGlobalExceptionHandler` first?**
-If it is not first, exceptions thrown by other middleware (like `UseRouting`)
-will not be caught and will bubble up as unhandled crashes.
+**What to learn next:** .NET Aspire with Redis, databases, message queues; Aspire to Kubernetes deployment.
 
 ---
 
-## How to Add a New Feature
+## 15. Learning Path
 
-### Add a new entity (e.g., Author)
-
-1. Create `Models/Author.cs` extending `BaseEntity`
-2. Create `Interfaces/IAuthorRepository.cs` extending `IRepository<Author>`
-3. Create `Repositories/AuthorRepository.cs` extending `Repository<Author>`
-4. Create `Interfaces/IAuthorService.cs` with business operations
-5. Create `Services/AuthorService.cs` implementing `IAuthorService`
-6. Create `DTOs/AuthorDto.cs`, `CreateAuthorRequest.cs`
-7. Create `Validators/CreateAuthorValidator.cs`
-8. Create `Controllers/AuthorsController.cs`
-9. Add `DbSet<Author>` to `AppDbContext`
-10. Wire everything in `Program.cs`
-
-Steps 1–8 touch zero existing files. Step 9 adds one property. Step 10 adds registrations.
-No existing code is modified. This is the Open/Closed Principle in action.
-
-### Add a new sort strategy
-
-1. Create `Strategies/GenreSortStrategy.cs` implementing `ISortStrategy<Book>`
-2. Register it in `Program.cs`: `builder.Services.AddScoped<ISortStrategy<Book>, GenreSortStrategy>()`
-3. Done — `BookService` and the UI automatically discover it
-
-Zero changes to existing files.
-
-### Add a new filter specification
-
-1. Create `Specifications/GenreSpecification.cs` implementing `ISpecification<Book>`
-2. Use it in `BookService.SearchAsync()` or compose with `AndSpecification`
+This section maps out what to learn after mastering the concepts in this project. Organized by category.
 
 ---
 
-## Key Takeaways
+### Cloud: AWS
 
-If you read nothing else, read this section.
+| Service | What It Does | When To Use |
+|---------|-------------|-------------|
+| **EC2** | Virtual machines | Custom server configs, lift-and-shift migrations |
+| **ECS / Fargate** | Container hosting (no server management) | Docker workloads without managing Kubernetes |
+| **Lambda** | Serverless functions | Event-driven, short-lived tasks (image resize, webhooks) |
+| **RDS** | Managed SQL databases (Postgres, MySQL, SQL Server) | Production databases without managing DB servers |
+| **S3** | Object storage | File uploads, static website hosting, backups |
+| **CloudFront** | CDN + edge caching | Static assets, API caching, global performance |
+| **API Gateway** | Managed HTTP entry point | Rate limiting, auth, routing to Lambda |
+| **SQS / SNS** | Message queues / pub-sub | Decoupled services, event-driven architecture |
+| **Secrets Manager** | Secure secret storage | Connection strings, API keys (instead of env vars) |
+| **CloudWatch** | Logs, metrics, alarms | Monitoring and alerting |
+| **CodePipeline** | CI/CD pipelines | Automated build/deploy without GitHub Actions |
 
-**1. Program.cs is the map of the entire application.**
-Every dependency, every wiring decision, every lifetime choice lives there.
-When you are confused about where something comes from, read Program.cs.
+**Start with:** EC2 + RDS (familiar concepts), then ECS/Fargate (containers), then Lambda (serverless).
 
-**2. Interfaces are the connective tissue.**
-The UI talks to `IBookService`. The service talks to `IBookRepository`.
-The controller talks to `IBookService`. Nobody talks to concrete classes.
-This is what makes everything testable, swappable, and maintainable.
+---
 
-**3. Patterns solve specific problems.**
-Strategy = eliminate if/else chains. Specification = name and reuse filter rules.
-Decorator = add behaviour without modifying existing code.
-Do not use a pattern because it sounds impressive — use it because it solves a real problem.
+### Cloud: Azure
 
-**4. DI is the glue, not the goal.**
-Dependency Injection makes patterns practical. Without it, wiring the decorator chain
-manually in every class would be unmanageable. DI is infrastructure, not architecture.
+| Service | What It Does | When To Use |
+|---------|-------------|-------------|
+| **App Service** | PaaS web hosting | ASP.NET Core apps without Docker complexity |
+| **Azure Container Apps** | Serverless containers | Like Fargate but with built-in Dapr support |
+| **Azure SQL / CosmosDB** | SQL and NoSQL databases | Managed databases; CosmosDB for globally distributed |
+| **Azure Functions** | Serverless (like Lambda) | Event-driven, triggers (HTTP, timer, queue) |
+| **Service Bus** | Enterprise message broker | Reliable messaging between services |
+| **Blob Storage** | Object storage (like S3) | Files, backups, static assets |
+| **Key Vault** | Secrets management | API keys, connection strings, certificates |
+| **Application Insights** | APM and monitoring | Distributed tracing, live metrics, failure analysis |
+| **Azure DevOps / GitHub Actions** | CI/CD | Automated pipelines |
 
-**5. Middleware pipeline order is critical and silent.**
-Getting the order wrong does not always produce an error. Sometimes it just
-silently breaks authentication, rate limiting, or exception handling in ways
-that only appear in production. Know the order, know why.
+**If you know AWS:** App Service ≈ Elastic Beanstalk, Service Bus ≈ SQS/SNS, CosmosDB ≈ DynamoDB.
 
-**6. Scoped services cannot live in Singletons.**
-This is the most common runtime bug in ASP.NET Core. Always use `IServiceScopeFactory`
-when a background service or singleton needs database access.
+---
 
-**7. Never commit secrets to git.**
-API keys, JWT signing keys, connection strings with passwords — use environment
-variables or a secrets manager. `appsettings.json` is for structure, not secrets.
+### Kubernetes
 
-**8. Graceful degradation is a feature.**
-The AI recommendation service returns a helpful message when unconfigured, not a crash.
-Every optional external dependency should behave this way.
+**What it is:** Container orchestration — runs, scales, and manages containers across a cluster of machines.
 
-**9. Health checks are not optional in production.**
-Without them, broken instances silently receive traffic. One endpoint, five lines of code,
-massive operational value.
+**Key concepts to learn (in order):**
+1. **Pods** — one or more containers running together (the smallest deployable unit)
+2. **Deployments** — declarative: "I want 3 replicas of this pod"
+3. **Services** — stable network endpoint for pods (load balancing)
+4. **ConfigMaps + Secrets** — inject config into pods
+5. **Ingress** — HTTP routing into the cluster
+6. **Namespaces** — logical isolation within a cluster
+7. **HPA (Horizontal Pod Autoscaler)** — auto-scale pods based on CPU/memory
+8. **Helm Charts** — package manager for Kubernetes apps
 
-**10. Test behaviour, not implementation.**
-Your tests should not break when you refactor internals. Test through interfaces.
-Mock dependencies, not the class under test.
+**Kubernetes readiness/liveness probes** use your `/health` endpoint:
+```yaml
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  periodSeconds: 30
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 10
+```
+
+**Recommended resources:** Kubernetes official documentation, "Kubernetes in Action" by Marko Lukša, Play with Kubernetes (pwk.labs.play-with-k8s.com).
+
+---
+
+### Docker Deep Dive
+
+Beyond the basics covered in this project:
+
+- **Docker networking** — bridge, host, overlay networks; how containers communicate
+- **Docker volumes** — bind mounts vs named volumes vs tmpfs
+- **Multi-container apps** — compose v3, health check dependencies, service ordering
+- **Image optimization** — minimizing layers, `.dockerignore`, distroless images
+- **Container registries** — Docker Hub, AWS ECR, Azure ACR, GitHub Container Registry
+- **Image scanning** — Trivy, Snyk, Grype for vulnerability scanning
+- **Multi-arch builds** — `docker buildx` for ARM64 + AMD64 (M1 Macs, AWS Graviton)
+
+---
+
+### gRPC
+
+**What it is:** A high-performance, binary RPC framework by Google. Alternative to REST for service-to-service communication.
+
+**Why choose gRPC over REST:**
+- 7-10x faster serialization (Protocol Buffers vs JSON)
+- Strongly-typed contracts via `.proto` files
+- Bidirectional streaming
+- Auto-generated client code in any language
+
+**When to use:**
+- Internal microservice communication (not public APIs)
+- High-throughput data pipelines
+- Real-time streaming (server-to-client, client-to-server)
+
+**In .NET:**
+```protobuf
+service BookService {
+  rpc GetBook (GetBookRequest) returns (BookReply);
+  rpc ListBooks (Empty) returns (stream BookReply);
+}
+```
+`dotnet-grpc` generates C# client and server stubs from the `.proto` file.
+
+**What to learn next:** Protobuf encoding, gRPC-Web for browser clients, gRPC with ASP.NET Core.
+
+---
+
+### Event-Driven Architecture
+
+**What it is:** Services communicate by publishing and consuming events, rather than calling each other directly (REST/gRPC).
+
+**Why it matters:**
+- **Decoupling** — the publisher doesn't know or care who consumes the event
+- **Resilience** — if a consumer is down, messages queue up (no data loss)
+- **Scalability** — consumers can be scaled independently
+- **Auditability** — event log is a natural audit trail
+
+**Key technologies:**
+
+| Technology | Type | Best For |
+|------------|------|----------|
+| **RabbitMQ** | Message broker | General-purpose messaging, routing patterns |
+| **Azure Service Bus** | Managed broker | Enterprise .NET applications in Azure |
+| **Apache Kafka** | Event streaming | High-throughput event logs, replay semantics |
+| **AWS SQS/SNS** | Managed queues/topics | AWS-native event-driven apps |
+| **MassTransit** | .NET abstraction | Unifies RabbitMQ, SQS, Service Bus behind one API |
+
+**Patterns to learn:**
+- **Publish/Subscribe** — one publisher, many consumers
+- **Competing Consumers** — multiple instances of one consumer, each processes one message
+- **Saga Pattern** — long-running business process across multiple services
+- **Outbox Pattern** — atomic DB write + event publish (no message loss)
+- **Event Sourcing** — store events as the source of truth, not state
+
+---
+
+### Microservices Patterns
+
+Once you're building distributed systems:
+
+| Pattern | Problem It Solves |
+|---------|-------------------|
+| **API Gateway** | Single entry point, auth, rate limiting, routing |
+| **Circuit Breaker** | Stop calling a failing service (Polly — already in this project!) |
+| **Service Discovery** | Find service addresses dynamically (Consul, Eureka, Kubernetes DNS) |
+| **Distributed Tracing** | Follow a request across 10 services (OpenTelemetry — already here!) |
+| **Distributed Caching** | Share cache across instances (Redis) |
+| **Distributed Locking** | Prevent race conditions across instances (Redlock) |
+| **Bulkhead** | Isolate failures (separate thread pools per external call) |
+| **Strangler Fig** | Gradually replace a monolith with microservices |
+| **CQRS + Event Sourcing** | Scale reads and writes independently |
+
+**Rule of thumb:** Don't start with microservices. Build a well-structured monolith first (like this app). Extract services only when you have a clear scalability or team boundary reason.
+
+---
+
+### Recommended Books
+
+**Foundations:**
+- *Clean Code* — Robert C. Martin — how to write readable, maintainable code
+- *Clean Architecture* — Robert C. Martin — layering and dependency rules
+- *Domain-Driven Design* — Eric Evans — modeling complex business domains
+- *Designing Data-Intensive Applications* — Martin Kleppmann — databases, distributed systems
+
+**Patterns:**
+- *Design Patterns: Elements of Reusable Object-Oriented Software* — Gang of Four — the classic patterns reference
+- *Patterns of Enterprise Application Architecture* — Martin Fowler — Repository, Unit of Work, etc.
+- *Microservices Patterns* — Chris Richardson — CQRS, Saga, event sourcing, and more
+
+**.NET Specific:**
+- *Pro ASP.NET Core 7* — Adam Freeman — comprehensive ASP.NET Core reference
+- *C# in Depth* — Jon Skeet — deep dive into C# language features
+- *Concurrency in C#* — Stephen Cleary — async/await, Channels, reactive programming
+
+**Cloud & DevOps:**
+- *Kubernetes in Action* — Marko Lukša — best K8s book
+- *The DevOps Handbook* — Kim, Humble, Debois — culture and practices
+- *Site Reliability Engineering* — Google — production operations at scale
+
+---
+
+### Recommended Courses
+
+- **Microsoft Learn** (free) — ASP.NET Core, Azure, EF Core learning paths
+- **Pluralsight** — .NET, cloud, architecture courses (paid, worth it)
+- **Udemy** — Kubernetes for developers, Docker Mastery (affordable)
+- **freeCodeCamp YouTube** — good free intros to Docker, Kubernetes, AWS
+- **NDC Conference talks** — YouTube, free — industry experts on architecture topics
+
+---
+
+*This document is a living reference. As the project evolves, new patterns and features will be added here.*

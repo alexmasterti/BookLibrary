@@ -5,6 +5,7 @@
 ![Blazor](https://img.shields.io/badge/Blazor-Server-512BD4?logo=blazor)
 ![SQLite](https://img.shields.io/badge/SQLite-EF%20Core-003B57?logo=sqlite)
 ![License](https://img.shields.io/badge/license-MIT-green)
+[![CI](https://github.com/alexmasterti/BookLibrary/actions/workflows/ci.yml/badge.svg)](https://github.com/alexmasterti/BookLibrary/actions/workflows/ci.yml)
 
 A full-stack **Blazor Server** application with a **REST API** backend, built to demonstrate enterprise-grade software engineering patterns and modern .NET 8 practices — including **AI-powered book recommendations** via the Anthropic Claude API.
 

@@ -1,0 +1,10 @@
+**/.git
+**/.gitignore
+**/bin
+**/obj
+**/.vs
+**/logs
+*.db
+*.db-shm
+*.db-wal
+.github/

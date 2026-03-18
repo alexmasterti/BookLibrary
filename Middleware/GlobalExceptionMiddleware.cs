@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BookLibrary.Middleware;
@@ -65,7 +66,12 @@ public class GlobalExceptionMiddleware
         context.Response.StatusCode  = (int)statusCode;
         context.Response.ContentType = "application/problem+json";
 
-        await context.Response.WriteAsJsonAsync(problem);
+        // Use WriteAsync instead of WriteAsJsonAsync for compatibility with TestHost (integration tests)
+        var json = JsonSerializer.Serialize(problem, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        });
+        await context.Response.WriteAsync(json);
     }
 }
 
