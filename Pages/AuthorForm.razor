@@ -1,0 +1,101 @@
+@page "/authors/new"
+@page "/authors/edit/{Id:int}"
+@inject BookLibrary.Interfaces.IAuthorService AuthorService
+@inject NavigationManager Nav
+
+<PageTitle>@(Id is null ? "Add Author" : "Edit Author") — BookShelf</PageTitle>
+
+<div style="max-width:520px">
+    <button class="btn btn-secondary mb-4" style="gap:6px" @onclick='() => Nav.NavigateTo("/authors")'>
+        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 18 9 12 15 6"/>
+        </svg>
+        Back to Authors
+    </button>
+
+    <div class="form-card">
+        <h3>@(Id is null ? "Add New Author" : "Edit Author")</h3>
+
+        <div class="mb-3">
+            <label class="form-label">Name <span style="color:#F87171">*</span></label>
+            <input class="form-control" placeholder="e.g. Robert C. Martin" @bind="author.Name" />
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem">
+            <div class="mb-3">
+                <label class="form-label">Birth Year</label>
+                <input type="number" class="form-control" placeholder="e.g. 1952" @bind="author.BirthYear" />
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Nationality</label>
+                <input class="form-control" placeholder="e.g. American" @bind="author.Nationality" />
+            </div>
+        </div>
+
+        <div class="mb-4">
+            <label class="form-label">Bio</label>
+            <textarea class="form-control" rows="4"
+                      placeholder="Short biography..."
+                      @bind="author.Bio"></textarea>
+        </div>
+
+        @if (!string.IsNullOrEmpty(error))
+        {
+            <div class="alert-danger mb-3">@error</div>
+        }
+
+        <div style="display:flex;gap:0.75rem">
+            <button class="btn btn-primary" @onclick="Save" style="flex:1">
+                <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                    <polyline points="17 21 17 13 7 13 7 21"/>
+                    <polyline points="7 3 7 8 15 8"/>
+                </svg>
+                @(Id is null ? "Save Author" : "Update Author")
+            </button>
+            <button class="btn btn-secondary" @onclick='() => Nav.NavigateTo("/authors")'>
+                Cancel
+            </button>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public int? Id { get; set; }
+
+    private BookLibrary.Models.Author author = new();
+    private string error = string.Empty;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Id is not null)
+        {
+            var existing = await AuthorService.GetAuthorByIdAsync(Id.Value);
+            if (existing is not null) author = existing;
+        }
+    }
+
+    private async Task Save()
+    {
+        if (string.IsNullOrWhiteSpace(author.Name))
+        {
+            error = "Name is required.";
+            return;
+        }
+
+        string toastMsg;
+
+        if (Id is null)
+        {
+            await AuthorService.AddAuthorAsync(author);
+            toastMsg = $"\"{author.Name}\" added successfully";
+        }
+        else
+        {
+            await AuthorService.UpdateAuthorAsync(author);
+            toastMsg = $"\"{author.Name}\" updated successfully";
+        }
+
+        Nav.NavigateTo($"/authors?toast={Uri.EscapeDataString(toastMsg)}");
+    }
+}
