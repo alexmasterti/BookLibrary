@@ -289,6 +289,10 @@ builder.Services.AddScoped<IBookRepository>(sp =>
 // ─── PRINCIPLE: Dependency Inversion (SOLID — 'D') ────────────────────────
 builder.Services.AddScoped<IBookService, BookService>();
 
+// ─── Author CRUD ───────────────────────────────────────────────────────────
+builder.Services.AddScoped<IAuthorRepository, AuthorRepository>();
+builder.Services.AddScoped<IAuthorService, AuthorService>();
+
 // ─── PATTERN: Factory ──────────────────────────────────────────────────────
 builder.Services.AddSingleton<IBookFactory, BookFactory>();
 
