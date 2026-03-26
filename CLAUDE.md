@@ -6,7 +6,7 @@ BookLibrary is a Blazor Server (.NET 9) application that serves as a comprehensi
 .NET portfolio/study sample. It intentionally demonstrates as many real-world
 patterns as possible in a single working codebase.
 
-**Live deployment:** https://booklibrary-production-64d2.up.railway.app
+**Live deployment:** https://booklibrary-alexcostasouza-64d2.up.railway.app
 **GitHub:** https://github.com/alexmasterti/BookLibrary
 **Architecture reference:** See `ARCHITECTURE.md` for full pattern documentation.
 
