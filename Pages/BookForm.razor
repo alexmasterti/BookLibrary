@@ -1,7 +1,7 @@
 @page "/books/new"
 @page "/books/edit/{Id:int}"
-@inject BookLibrary.Interfaces.IBookService BookService
-@inject BookLibrary.Interfaces.IBookFactory BookFactory
+@inject IBookService BookService
+@inject IBookFactory BookFactory
 @inject NavigationManager Nav
 
 <PageTitle>@(Id is null ? "Add Book" : "Edit Book") — BookShelf</PageTitle>

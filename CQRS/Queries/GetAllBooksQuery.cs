@@ -1,4 +1,4 @@
-using BookLibrary.DTOs;
+using BookLibrary.DTOs.Book;
 using MediatR;
 
 namespace BookLibrary.CQRS.Queries;

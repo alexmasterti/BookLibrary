@@ -1,7 +1,9 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
-using BookLibrary.DTOs;
+using BookLibrary.DTOs.Auth;
+using BookLibrary.DTOs.Book;
+using BookLibrary.DTOs.Common;
 using Xunit;
 
 namespace BookLibrary.Tests.Integration;

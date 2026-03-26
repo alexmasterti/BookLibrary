@@ -1,5 +1,7 @@
 using BookLibrary.CQRS.Commands;
-using BookLibrary.Interfaces;
+using BookLibrary.Interfaces.Books;
+using BookLibrary.Interfaces.Authors;
+using BookLibrary.Interfaces.Common;
 using MediatR;
 
 namespace BookLibrary.CQRS.Handlers;

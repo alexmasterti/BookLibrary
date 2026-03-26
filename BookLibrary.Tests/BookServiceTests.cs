@@ -1,6 +1,11 @@
-using BookLibrary.Interfaces;
+using BookLibrary.Interfaces.Books;
+using BookLibrary.Interfaces.Authors;
+using BookLibrary.Interfaces.Common;
 using BookLibrary.Models;
-using BookLibrary.Services;
+using BookLibrary.Services.Books;
+using BookLibrary.Services.Authors;
+using BookLibrary.Services.Auth;
+using BookLibrary.Services.Common;
 using BookLibrary.Strategies;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -97,7 +102,7 @@ public class BookServiceTests
     [Fact]
     public async Task GetPagedAsync_ReturnsCorrectPage()
     {
-        var request = new DTOs.PagedBooksRequest { PageNumber = 1, PageSize = 2 };
+        var request = new DTOs.Book.PagedBooksRequest { PageNumber = 1, PageSize = 2 };
         var result  = await _service.GetPagedAsync(request);
 
         Assert.Equal(2, result.Items.Count());
@@ -110,7 +115,7 @@ public class BookServiceTests
     [Fact]
     public async Task GetPagedAsync_SecondPage_ReturnsRemainingItems()
     {
-        var request = new DTOs.PagedBooksRequest { PageNumber = 2, PageSize = 2 };
+        var request = new DTOs.Book.PagedBooksRequest { PageNumber = 2, PageSize = 2 };
         var result  = await _service.GetPagedAsync(request);
 
         Assert.Single(result.Items);

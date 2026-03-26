@@ -1,5 +1,5 @@
-using BookLibrary.DTOs;
-using BookLibrary.Validators;
+using BookLibrary.DTOs.Book;
+using BookLibrary.Validators.Book;
 
 namespace BookLibrary.Tests;
 

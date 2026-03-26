@@ -1,6 +1,6 @@
 @page "/books"
-@inject BookLibrary.Interfaces.IBookService BookService
-@inject IEnumerable<BookLibrary.Interfaces.ISortStrategy<BookLibrary.Models.Book>> SortStrategies
+@inject IBookService BookService
+@inject IEnumerable<ISortStrategy<Book>> SortStrategies
 @inject NavigationManager Nav
 
 <PageTitle>My Books — BookShelf</PageTitle>

@@ -1,6 +1,6 @@
 @page "/authors/new"
 @page "/authors/edit/{Id:int}"
-@inject BookLibrary.Interfaces.IAuthorService AuthorService
+@inject IAuthorService AuthorService
 @inject NavigationManager Nav
 
 <PageTitle>@(Id is null ? "Add Author" : "Edit Author") — BookShelf</PageTitle>
