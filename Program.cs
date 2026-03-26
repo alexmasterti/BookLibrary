@@ -10,16 +10,19 @@ using BookLibrary.Data;
 using BookLibrary.Factories;
 using BookLibrary.Interfaces.Books;
 using BookLibrary.Interfaces.Authors;
+using BookLibrary.Interfaces.Genres;
 using BookLibrary.Interfaces.Common;
 using BookLibrary.Middleware;
 using BookLibrary.Models;
 using BookLibrary.Options;
 using BookLibrary.Repositories.Books;
 using BookLibrary.Repositories.Authors;
+using BookLibrary.Repositories.Genres;
 using BookLibrary.Repositories.Common;
 using BookLibrary.Services.Books;
 using BookLibrary.Services.Authors;
 using BookLibrary.Services.Auth;
+using BookLibrary.Services.Genres;
 using BookLibrary.Services.Common;
 using BookLibrary.Strategies;
 using FluentValidation;
@@ -299,6 +302,10 @@ builder.Services.AddScoped<IBookService, BookService>();
 // ─── Author CRUD ───────────────────────────────────────────────────────────
 builder.Services.AddScoped<IAuthorRepository, AuthorRepository>();
 builder.Services.AddScoped<IAuthorService, AuthorService>();
+
+// ─── Genre CRUD ────────────────────────────────────────────────────────────
+builder.Services.AddScoped<IGenreRepository, GenreRepository>();
+builder.Services.AddScoped<IGenreService, GenreService>();
 
 // ─── PATTERN: Factory ──────────────────────────────────────────────────────
 builder.Services.AddSingleton<IBookFactory, BookFactory>();

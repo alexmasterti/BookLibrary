@@ -1,0 +1,90 @@
+@page "/genres/new"
+@page "/genres/edit/{Id:int}"
+@inject IGenreService GenreService
+@inject NavigationManager Nav
+
+<PageTitle>@(Id is null ? "Add Genre" : "Edit Genre") — BookShelf</PageTitle>
+
+<div style="max-width:520px">
+    <button class="btn btn-secondary mb-4" style="gap:6px" @onclick='() => Nav.NavigateTo("/genres")'>
+        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 18 9 12 15 6"/>
+        </svg>
+        Back to Genres
+    </button>
+
+    <div class="form-card">
+        <h3>@(Id is null ? "Add New Genre" : "Edit Genre")</h3>
+
+        <div class="mb-3">
+            <label class="form-label">Name <span style="color:#F87171">*</span></label>
+            <input class="form-control" placeholder="e.g. Science Fiction" @bind="genre.Name" />
+        </div>
+
+        <div class="mb-4">
+            <label class="form-label">Description</label>
+            <textarea class="form-control" rows="4"
+                      placeholder="Short description..."
+                      @bind="genre.Description"></textarea>
+        </div>
+
+        @if (!string.IsNullOrEmpty(error))
+        {
+            <div class="alert-danger mb-3">@error</div>
+        }
+
+        <div style="display:flex;gap:0.75rem">
+            <button class="btn btn-primary" @onclick="Save" style="flex:1">
+                <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                    <polyline points="17 21 17 13 7 13 7 21"/>
+                    <polyline points="7 3 7 8 15 8"/>
+                </svg>
+                @(Id is null ? "Save Genre" : "Update Genre")
+            </button>
+            <button class="btn btn-secondary" @onclick='() => Nav.NavigateTo("/genres")'>
+                Cancel
+            </button>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public int? Id { get; set; }
+
+    private BookLibrary.Models.Genre genre = new() { Name = string.Empty };
+    private string error = string.Empty;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Id is not null)
+        {
+            var existing = await GenreService.GetGenreByIdAsync(Id.Value);
+            if (existing is not null) genre = existing;
+        }
+    }
+
+    private async Task Save()
+    {
+        if (string.IsNullOrWhiteSpace(genre.Name))
+        {
+            error = "Name is required.";
+            return;
+        }
+
+        string toastMsg;
+
+        if (Id is null)
+        {
+            await GenreService.AddGenreAsync(genre);
+            toastMsg = $"\"{genre.Name}\" added successfully";
+        }
+        else
+        {
+            await GenreService.UpdateGenreAsync(genre);
+            toastMsg = $"\"{genre.Name}\" updated successfully";
+        }
+
+        Nav.NavigateTo($"/genres?toast={Uri.EscapeDataString(toastMsg)}");
+    }
+}

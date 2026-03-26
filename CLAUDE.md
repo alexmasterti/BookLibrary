@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-BookLibrary is a Blazor Server (.NET 7) application that serves as a comprehensive
+BookLibrary is a Blazor Server (.NET 9) application that serves as a comprehensive
 .NET portfolio/study sample. It intentionally demonstrates as many real-world
 patterns as possible in a single working codebase.
 
@@ -14,8 +14,8 @@ patterns as possible in a single working codebase.
 
 ## Tech Stack
 
-- **Framework:** Blazor Server, .NET 7, C# 11
-- **Database:** SQLite via Entity Framework Core 7
+- **Framework:** Blazor Server, .NET 9, C# 13
+- **Database:** SQLite via Entity Framework Core 9
 - **Authentication:** JWT Bearer (API layer only)
 - **Caching:** `IMemoryCache` (in-process, singleton)
 - **API Docs:** Swagger UI via Swashbuckle (`/swagger` — Development only)

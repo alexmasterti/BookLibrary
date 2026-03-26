@@ -9,4 +9,5 @@ public class AppDbContext : DbContext
 
     public DbSet<Book> Books => Set<Book>();
     public DbSet<Author> Authors => Set<Author>();
+    public DbSet<Genre> Genres => Set<Genre>();
 }
